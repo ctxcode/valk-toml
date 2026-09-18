@@ -1,0 +1,84 @@
+use toml
+use valk.json
+
+class WriteServer {
+    host: String
+    port: uint
+}
+class WriteSettings {
+    name: String
+    debug: bool
+    tags: Array[String]
+    server: WriteServer
+}
+
+test "Writing TOML" {
+    let settings = WriteSettings {
+        name: "the service"
+        debug: true
+        tags: .{ "a", "b" }
+        server: WriteServer { host: "127.0.0.1", port: 8080 }
+    }
+    let text = toml.encode_of(settings)
+
+    // The plain values come before the first table header, or they would belong to it
+    assert(text.contains("name = \"the service\""))
+    assert(text.contains("debug = true"))
+    assert(text.contains("tags = [\"a\", \"b\"]"))
+    assert(text.contains("[server]"))
+    assert(text.index_of("debug") !! < text.index_of("[server]") !!)
+
+    // And it reads back as what went in
+    let again = toml.decode_to[WriteSettings](text) ! { println(E.message) assert(false) return }
+    assert(again.name == settings.name)
+    assert(again.debug)
+    assert(again.tags.length == 2)
+    assert(again.server.port == 8080)
+}
+
+test "Writing what needs quoting" {
+    let document: json.Value = json.new_object()
+    document = document.set("a key", json.new_string("with \"quotes\" and \\slash"))
+    document = document.set("lines", json.new_string("one\ntwo"))
+    document = document.set("plain", json.new_int(1))
+
+    let text = toml.encode(document)
+    assert(text.contains("\"a key\" = "))
+    assert(text.contains("\\\"quotes\\\""))
+    assert(text.contains("\\n"))
+
+    let back = toml.decode(text) ! { println(E.message) assert(false) return }
+    assert(back["a key"].string == "with \"quotes\" and \\slash")
+    assert(back["lines"].string == "one\ntwo")
+    assert(back["plain"].int == 1)
+}
+
+test "Writing tables and arrays of tables" {
+    let text = toml.encode(toml.decode("
+        title = \"x\"
+
+        [[servers]]
+        name = \"alpha\"
+
+        [[servers]]
+        name = \"beta\"
+
+        [database]
+        pool = 4
+
+        [database.tls]
+        on = true
+    ") ! { assert(false) return })
+
+    assert(text.contains("[[servers]]"))
+    assert(text.contains("[database]"))
+    assert(text.contains("[database.tls]"))
+
+    // What was written reads back the same
+    let back = toml.decode(text) ! { println(E.message) assert(false) return }
+    assert(back["title"].string == "x")
+    assert(back["servers"].array.length == 2)
+    assert(back["servers"][1]["name"].string == "beta")
+    assert(back["database"]["pool"].int == 4)
+    assert(back["database"]["tls"]["on"].bool)
+}

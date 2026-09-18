@@ -1,0 +1,224 @@
+use toml
+use valk.json
+
+test "Values" {
+    let document = toml.decode("
+        # a comment, and a blank line above
+
+        name = \"valk\"
+        literal = 'no \\escapes here'
+        answer = 42
+        negative = -17
+        big = 1_000_000
+        hex = 0xff
+        octal = 0o755
+        binary = 0b1011
+        ratio = 1.5
+        exponent = 2.5e3
+        yes = true
+        no = false
+        multiline = \"\"\"
+        over
+        two lines\"\"\"
+    ") ! { println(E.message + " at line " + E.line) assert(false) return }
+
+    assert(document["name"].string == "valk")
+    assert(document["literal"].string == "no \\escapes here")
+    assert(document["answer"].int == 42)
+    assert(document["negative"].int == -17)
+    assert(document["big"].int == 1000000)
+    assert(document["hex"].int == 255)
+    assert(document["octal"].int == 493)
+    assert(document["binary"].int == 11)
+    assert(document["ratio"].float == 1.5)
+    assert(document["exponent"].float == 2500)
+    assert(document["yes"].bool)
+    assert(!document["no"].bool)
+    assert(document["multiline"].string.contains("over\n"))
+}
+
+test "Strings and escapes" {
+    let document = toml.decode("
+        plain = \"a b\"
+        escaped = \"line\\nbreak\\ttab\\\"quote\\\\slash\"
+        unicode = \"\\u00e9 \\u0041\"
+        empty = \"\"
+        keep = '''
+raw \\n stays'''
+    ") ! { println(E.message) assert(false) return }
+
+    assert(document["plain"].string == "a b")
+    assert(document["escaped"].string == "line\nbreak\ttab\"quote\\slash")
+    assert(document["unicode"].string == "é A")
+    assert(document["empty"].string == "")
+    assert(document["keep"].string == "raw \\n stays")
+}
+
+test "Tables" {
+    let document = toml.decode("
+        title = \"the config\"
+
+        [server]
+        host = \"127.0.0.1\"
+        port = 8080
+
+        [server.tls]
+        enabled = true
+
+        [database]
+        url = \"sqlite://app.db\"
+        pool = 8
+    ") ! { println(E.message + " at line " + E.line) assert(false) return }
+
+    assert(document["title"].string == "the config")
+    assert(document["server"]["host"].string == "127.0.0.1")
+    assert(document["server"]["port"].int == 8080)
+    assert(document["server"]["tls"]["enabled"].bool)
+    assert(document["database"]["pool"].int == 8)
+
+    // Dotted keys write into tables as well
+    let dotted = toml.decode("a.b.c = 1\na.b.d = 2\n") ! { println(E.message) assert(false) return }
+    assert(dotted["a"]["b"]["c"].int == 1)
+    assert(dotted["a"]["b"]["d"].int == 2)
+
+    // And a quoted key keeps whatever is in it
+    let quoted = toml.decode("\"a key\" = 1\n'b.key' = 2\n") ! { println(E.message) assert(false) return }
+    assert(quoted["a key"].int == 1)
+    assert(quoted["b.key"].int == 2)
+}
+
+test "Arrays and inline tables" {
+    let document = toml.decode("
+        ports = [8080, 8081, 8082]
+        names = [\"a\", \"b\"]
+        nested = [[1, 2], [3]]
+        over_lines = [
+            1,
+            2,
+        ]
+        empty = []
+        point = { x = 1, y = 2 }
+        who = { name = \"ada\", roles = [\"admin\"] }
+    ") ! { println(E.message + " at line " + E.line) assert(false) return }
+
+    assert(document["ports"].array.length == 3)
+    assert(document["ports"][1].int == 8081)
+    assert(document["names"][0].string == "a")
+    assert(document["nested"][0][1].int == 2)
+    assert(document["over_lines"].array.length == 2)
+    assert(document["empty"].array.length == 0)
+    assert(document["point"]["y"].int == 2)
+    assert(document["who"]["roles"][0].string == "admin")
+}
+
+test "Arrays of tables" {
+    let document = toml.decode("
+        [[servers]]
+        name = \"alpha\"
+        port = 1
+
+        [[servers]]
+        name = \"beta\"
+        port = 2
+
+        [servers.limits]
+        connections = 10
+
+        [[empty]]
+    ") ! { println(E.message + " at line " + E.line) assert(false) return }
+
+    assert(document["servers"].array.length == 2)
+    assert(document["servers"][0]["name"].string == "alpha")
+    assert(document["servers"][1]["port"].int == 2)
+    // A table under the last one of the array
+    assert(document["servers"][1]["limits"]["connections"].int == 10)
+    assert(document["empty"].array.length == 1)
+}
+
+test "Dates stay as they were written" {
+    let document = toml.decode("
+        moment = 1979-05-27T07:32:00Z
+        local = 1979-05-27 07:32:00
+        day = 1979-05-27
+        clock = 07:32:00
+        offset = 1979-05-27T00:32:00-07:00
+    ") ! { println(E.message + " at line " + E.line) assert(false) return }
+
+    assert(document["moment"].string == "1979-05-27T07:32:00Z")
+    assert(document["local"].string == "1979-05-27 07:32:00")
+    assert(document["day"].string == "1979-05-27")
+    assert(document["clock"].string == "07:32:00")
+    assert(document["offset"].string == "1979-05-27T00:32:00-07:00")
+}
+
+class Server {
+    host: String
+    port: uint (8080)
+}
+class Settings {
+    name: String
+    debug: bool (false)
+    server: Server
+}
+
+test "Reading into a class" {
+    let settings = toml.decode_to[Settings]("
+        name = \"the service\"
+        debug = true
+
+        [server]
+        host = \"0.0.0.0\"
+        port = 9000
+    ") ! { println(E.message) assert(false) return }
+
+    assert(settings.name == "the service")
+    assert(settings.debug)
+    assert(settings.server.host == "0.0.0.0")
+    assert(settings.server.port == 9000)
+
+    // A field with a default may be left out
+    let fewer = toml.decode_to[Settings]("
+        name = \"smaller\"
+
+        [server]
+        host = \"127.0.0.1\"
+    ") ! { println(E.message) assert(false) return }
+    assert(fewer.server.port == 8080)
+    assert(!fewer.debug)
+
+    // A field that is needed and not there is an error, not a zero
+    toml.decode_to[Settings]("debug = true\n") ! {
+        assert(error_is(E.code, type))
+        return
+    }
+    assert(false)
+}
+
+test "What is not TOML" {
+    // A key with no value
+    toml.decode("name\n") ! {
+        assert(error_is(E.code, syntax))
+        assert(E.line == 2)
+    }
+    // A string that never closes
+    toml.decode("name = \"open\n") ! {
+        assert(error_is(E.code, syntax))
+    }
+    // The same key twice
+    toml.decode("a = 1\na = 2\n") ! {
+        assert(error_is(E.code, duplicate))
+        assert(E.message.contains("'a'"))
+    }
+    // The same table twice
+    toml.decode("[a]\nx = 1\n\n[a]\ny = 2\n") ! {
+        assert(error_is(E.code, duplicate))
+        assert(E.message.contains("given twice"))
+    }
+    // Something after the value
+    toml.decode("a = 1 oops\n") ! {
+        assert(error_is(E.code, syntax))
+        assert(E.line == 1)
+        return
+    }
+    assert(false)
+}

@@ -1,0 +1,165 @@
+use valk.json
+
+/// Writes a `json.Value` as TOML.
+///
+/// Plain values come first, then the tables, then the arrays of tables, which is the order TOML
+/// is read in. Text that is not a bare key is quoted, and a string is escaped.
+///
+/// ```valk
+/// fs.write("config.toml", toml.encode(settings)) ! panic("%{E.message}")
+/// ```
++ fn encode(value: json.Value) String {
+    let out = ByteBuffer.new(256)
+    match value {
+        json.ObjectValue as object => write_table(out, object, Array[String]{})
+        default => out.write(encode_inline(value))
+    }
+    return out.to_string()
+}
+
+/// Writes a class or struct of your own as TOML, the way `json.from` would read it.
++ fn encode_of(value: $T) String {
+    return encode(json.from(value))
+}
+
+// The keys of a table, then the tables under it
+fn write_table(out: ByteBuffer, table: json.ObjectValue, path: Array[String]) {
+    // Plain values first: a table header would otherwise swallow them
+    each table.values as value, key {
+        if is_table(value) || is_table_array(value) : continue
+        out.write(encode_key(key))
+        out.write(" = ")
+        out.write(encode_inline(value))
+        out.write_byte('\n')
+    }
+
+    each table.values as value, key {
+        let inner = Array[String]{}
+        inner.append_many(path)
+        inner.append(key)
+
+        match value {
+            json.ObjectValue as object => {
+                out.write_byte('\n')
+                out.write_byte('[')
+                out.write(encode_path(inner))
+                out.write("]\n")
+                write_table(out, object, inner)
+            }
+            json.ArrayValue as array => {
+                if !is_table_array(value) : continue
+                each array.values as item {
+                    match item {
+                        json.ObjectValue as object => {
+                            out.write_byte('\n')
+                            out.write("[[")
+                            out.write(encode_path(inner))
+                            out.write("]]\n")
+                            write_table(out, object, inner)
+                        }
+                        default => {}
+                    }
+                }
+            }
+            default => {}
+        }
+    }
+}
+
+// A value as it is written on one line
+fn encode_inline(value: json.Value) String {
+    match value {
+        String as text => return encode_string(text)
+        int as number => return number.to(String)
+        float as number => return number.to_shortest_string()
+        bool as yes => return yes ? "true" : "false"
+        json.ArrayValue as array => {
+            let out = ByteBuffer.new(32)
+            out.write_byte('[')
+            each array.values as item, index {
+                if index > 0 : out.write(", ")
+                out.write(encode_inline(item))
+            }
+            out.write_byte(']')
+            return out.to_string()
+        }
+        json.ObjectValue as object => {
+            let out = ByteBuffer.new(32)
+            out.write("{ ")
+            each object.values as item, key, index {
+                if index > 0 : out.write(", ")
+                out.write(encode_key(key))
+                out.write(" = ")
+                out.write(encode_inline(item))
+            }
+            out.write(" }")
+            return out.to_string()
+        }
+        default => return "\"\""
+    }
+}
+
+fn encode_key(key: String) String {
+    let bare = key.length > 0
+    each key as ch {
+        if !is_bare_key_byte(ch) : bare = false
+    }
+    if bare : return key
+    return encode_string(key)
+}
+
+fn encode_path(path: Array[String]) String {
+    let out = ByteBuffer.new(32)
+    each path as name, index {
+        if index > 0 : out.write_byte('.')
+        out.write(encode_key(name))
+    }
+    return out.to_string()
+}
+
+fn encode_string(text: String) String {
+    let out = ByteBuffer.new(text.length + 2)
+    out.write_byte('"')
+    each text as ch {
+        if ch == '"' : out.write("\\\"")
+        else if ch == '\\' : out.write("\\\\")
+        else if ch == '\n' : out.write("\\n")
+        else if ch == '\t' : out.write("\\t")
+        else if ch == '\r' : out.write("\\r")
+        else if ch < 0x20 {
+            out.write("\\u00")
+            out.write_byte(hex_digit(ch >> 4))
+            out.write_byte(hex_digit(ch & 0x0f))
+        } else {
+            out.write_byte(ch)
+        }
+    }
+    out.write_byte('"')
+    return out.to_string()
+}
+
+fn hex_digit(value: u8) u8 {
+    if value < 10 : return '0' + value
+    return 'a' + (value - 10)
+}
+
+fn is_table(value: json.Value) bool {
+    match value {
+        json.ObjectValue as _ => return true
+        default => return false
+    }
+}
+
+// An array whose items are all tables is written as `[[name]]`, anything else on one line
+fn is_table_array(value: json.Value) bool {
+    match value {
+        json.ArrayValue as array => {
+            if array.values.length == 0 : return false
+            each array.values as item {
+                if !is_table(item) : return false
+            }
+            return true
+        }
+        default => return false
+    }
+}

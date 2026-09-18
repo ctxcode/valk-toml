@@ -1,0 +1,13 @@
+/// Thrown when text is not TOML.
+///
+/// - `syntax`: the text does not read as TOML.
+/// - `duplicate`: a key or a table is given twice, which TOML does not allow.
+/// - `type`: a value is not what the type it is read into needs.
+///
+/// `line` and `column` say where the reader stopped, counting from one, so the message can be
+/// shown against the file.
++ error Error (syntax, duplicate, type) payload {
+    message: String
+    line: uint (0)
+    column: uint (0)
+}

@@ -1,0 +1,92 @@
+use valk.json
+
+// Where a value goes. A table is a `json.ObjectValue`, and its members are written into its own
+// map, so `[[servers]]` can hand back the table that the keys after it belong to.
+
+// Walks `path` inside `table`, making the tables that are not there yet, and returns the last
+// one. A step that lands on an array of tables follows its last table, which is what
+// `[[a]]` then `[a.b]` means.
+fn table_at(r: Reader, table: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+    let current = table
+    each path as name {
+        if !current.values.has(name) {
+            let made = json.new_object()
+            current.values.set(name, made)
+            current = made
+            continue
+        }
+        let child = current.values.get(name) !? json.new_object()
+        match child {
+            json.ObjectValue as object => current = object
+            json.ArrayValue as array => {
+                let last = array.values.get(array.values.length - 1) ! {
+                    r.fail_duplicate("'" + name + "' is an empty array, so nothing can be written inside it")
+                }
+                match last {
+                    json.ObjectValue as object => current = object
+                    default => r.fail_duplicate("'" + name + "' holds values, not tables")
+                }
+            }
+            default => r.fail_duplicate("'" + name + "' is a value, so nothing can be written inside it")
+        }
+    }
+    return current
+}
+
+// `key = value` inside the table that is open
+fn set_key(r: Reader, table: json.ObjectValue, path: Array[String], value: json.Value) !Error {
+    if path.length == 0 : r.fail("A value needs a key")
+    let name = path.get(path.length - 1) !? ""
+    let parent = table
+    if path.length > 1 {
+        parent = table_at(r, table, path.range(0, path.length - 1)) !>
+    }
+    if parent.values.has(name) : r.fail_duplicate("'" + path.join(".") + "' is given twice")
+    parent.values.set(name, value)
+}
+
+// `[a.b]`: the table the keys after it belong to
+fn open_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+    if path.length == 0 : r.fail("A table needs a name")
+    let name = path.get(path.length - 1) !? ""
+    let parent = root
+    if path.length > 1 : parent = table_at(r, root, path.range(0, path.length - 1)) !>
+
+    if parent.values.has(name) {
+        let existing = parent.values.get(name) !? json.new_object()
+        match existing {
+            // A table that is already there was made as the parent of another one, which TOML
+            // allows: `[a.b]` before `[a]`. A header written twice is caught by the decoder,
+            // which remembers the headers it has seen.
+            json.ObjectValue as object => return object
+            default => r.fail_duplicate("'" + path.join(".") + "' is a value, so it cannot also be a table")
+        }
+    }
+    let made = json.new_object()
+    parent.values.set(name, made)
+    return made
+}
+
+// `[[a.b]]`: another table in the array at that path, which the keys after it belong to
+fn open_array_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+    if path.length == 0 : r.fail("A table needs a name")
+    let name = path.get(path.length - 1) !? ""
+    let parent = root
+    if path.length > 1 : parent = table_at(r, root, path.range(0, path.length - 1)) !>
+
+    let made = json.new_object()
+    if !parent.values.has(name) {
+        let array = json.new_array()
+        array.values.append(made)
+        parent.values.set(name, array)
+        return made
+    }
+    let existing = parent.values.get(name) !? json.new_object()
+    match existing {
+        json.ArrayValue as array => {
+            array.values.append(made)
+            return made
+        }
+        default => r.fail_duplicate("'" + path.join(".") + "' is not an array of tables")
+    }
+}

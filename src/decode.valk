@@ -1,0 +1,117 @@
+use valk.json
+
+/// Reads TOML and returns it as a `json.Value`, so everything that works with JSON works with it.
+///
+/// Dates and times come through as the text they were written as; TOML has types for them and
+/// JSON does not.
+///
+/// ```valk
+/// let config = toml.decode(fs.read("config.toml") !!) ! panic("%{E.message}")
+/// println(config["server"]["port"].int)
+/// ```
++ fn decode(text: String) json.Value !Error {
+    let r = Reader { text: text }
+    let root = json.new_object()
+    // The table the keys that follow are written into
+    let current = root
+    // The `[table]` headers that have been seen, so that one written twice is caught
+    let opened: Map[bool] = .{}
+
+    while true {
+        r.skip_space_and_lines()
+        if r.done() : break
+
+        if r.peek() == '[' {
+            let is_array = r.peek_at(1) == '['
+            let path = read_table_header(r, is_array) !>
+            r.end_of_line() !>
+            if is_array {
+                current = open_array_table(r, root, path) !>
+            } else {
+                let key = path.join(".")
+                if opened.has(key) : r.fail_duplicate("The table '" + key + "' is given twice")
+                opened.set(key, true)
+                current = open_table(r, root, path) !>
+            }
+            continue
+        }
+
+        let key = read_key_path(r) !>
+        r.skip_spaces()
+        if r.next() != '=' : r.fail("Expected '=' after a key")
+        r.skip_spaces()
+        let value = read_value(r) !>
+        r.end_of_line() !>
+        set_key(r, current, key, value) !>
+    }
+    let document: json.Value = root
+    return document
+}
+
+/// Reads TOML into a class or struct of your own.
+///
+/// Every field must be in the text, unless it is nullable or has a default.
+///
+/// ```valk
+/// class Settings {
+///     name: String
+///     port: uint (8080)
+/// }
+///
+/// let settings = toml.decode_to[Settings](text) ! panic("%{E.message}")
+/// ```
++ fn decode_to[T](text: String) T !Error {
+    let document = decode(text) !>
+    return document.to_type[T]() ! {
+        throw .type { message: "This TOML does not fit the type it was read into" }
+    }
+}
+
+// `[a.b]` or `[[a.b]]`
+fn read_table_header(r: Reader, is_array: bool) Array[String] !Error {
+    r.next() // `[`
+    if is_array : r.next()
+    r.skip_spaces()
+    let path = read_key_path(r) !>
+    r.skip_spaces()
+    if r.next() != ']' : r.fail("Expected ']' after a table name")
+    if is_array && r.next() != ']' : r.fail("Expected ']]' after the name of an array table")
+    return path
+}
+
+// `a`, `a.b`, `"a b".c`
+fn read_key_path(r: Reader) Array[String] !Error {
+    let path = Array[String]{}
+    while true {
+        r.skip_spaces()
+        let ch = r.peek()
+        if ch == '"' || ch == '\'' {
+            path.append(read_string(r) !>)
+        } else {
+            let out = ByteBuffer.new(16)
+            while !r.done() {
+                let c = r.peek()
+                if is_bare_key_byte(c) {
+                    out.write_byte(r.next())
+                    continue
+                }
+                break
+            }
+            if out.length == 0 : r.fail("Expected a key")
+            path.append(out.to_string())
+        }
+        r.skip_spaces()
+        if r.peek() == '.' {
+            r.next()
+            continue
+        }
+        return path
+    }
+}
+
+fn is_bare_key_byte(ch: u8) bool {
+    if ch >= 'a' && ch <= 'z' : return true
+    if ch >= 'A' && ch <= 'Z' : return true
+    if ch >= '0' && ch <= '9' : return true
+    return ch == '_' || ch == '-'
+}

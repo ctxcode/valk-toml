@@ -1,0 +1,228 @@
+use valk.json
+
+// Reading one value: a string, a number, a bool, a date, an array or an inline table.
+
+fn read_value(r: Reader) json.Value !Error {
+    let ch = r.peek()
+    if ch == '"' || ch == '\'' : return json.new_string(read_string(r) !>)
+    if ch == '[' : return read_array(r) !>
+    if ch == '{' : return read_inline_table(r) !>
+    if ch == 't' || ch == 'f' : return read_bool(r) !>
+    return read_number_or_date(r) !>
+}
+
+fn read_bool(r: Reader) json.Value !Error {
+    if r.starts_with("true") {
+        r.skip(4)
+        return json.new_bool(true)
+    }
+    if r.starts_with("false") {
+        r.skip(5)
+        return json.new_bool(false)
+    }
+    r.fail("Expected a value")
+}
+
+// `"..."`, `"""..."""`, `'...'` and `'''...'''`
+fn read_string(r: Reader) String !Error {
+    if r.starts_with("\"\"\"") : return read_multiline_basic(r) !>
+    if r.starts_with("'''") : return read_multiline_literal(r) !>
+    if r.peek() == '"' : return read_basic(r) !>
+    return read_literal(r) !>
+}
+
+fn read_basic(r: Reader) String !Error {
+    r.next() // the opening quote
+    let out = ByteBuffer.new(32)
+    while true {
+        if r.done() : r.fail("A string was not closed")
+        let ch = r.next()
+        if ch == '"' : return out.to_string()
+        if ch == '\n' : r.fail("A string was not closed before the end of the line")
+        if ch == '\\' {
+            read_escape(r, out) !>
+            continue
+        }
+        out.write_byte(ch)
+    }
+}
+
+fn read_literal(r: Reader) String !Error {
+    r.next() // the opening quote
+    let out = ByteBuffer.new(32)
+    while true {
+        if r.done() : r.fail("A string was not closed")
+        let ch = r.next()
+        if ch == '\'' : return out.to_string()
+        if ch == '\n' : r.fail("A string was not closed before the end of the line")
+        out.write_byte(ch)
+    }
+}
+
+fn read_multiline_basic(r: Reader) String !Error {
+    r.skip(3)
+    // A line end right after the opening quotes is not part of the string
+    if r.peek() == '\n' : r.next()
+    else if r.peek() == '\r' && r.peek_at(1) == '\n' : r.skip(2)
+
+    let out = ByteBuffer.new(64)
+    while true {
+        if r.done() : r.fail("A multi-line string was not closed")
+        if r.starts_with("\"\"\"") {
+            r.skip(3)
+            // Up to two more quotes belong to the string itself
+            while r.peek() == '"' && out.length < uint.$max {
+                out.write_byte(r.next())
+                if out.length > 0 && r.peek() != '"' : break
+            }
+            return out.to_string()
+        }
+        let ch = r.next()
+        if ch == '\\' {
+            // A backslash at the end of a line eats the line break and the spaces after it
+            let ahead = r.peek()
+            if ahead == '\n' || ahead == '\r' || ahead == ' ' || ahead == '\t' {
+                let only_space = true
+                let i: uint = 0
+                while true {
+                    let c = r.peek_at(i)
+                    if c == ' ' || c == '\t' : i++
+                    else if c == '\n' || c == '\r' : break
+                    else {
+                        only_space = false
+                        break
+                    }
+                }
+                if only_space {
+                    r.skip_space_and_lines()
+                    continue
+                }
+            }
+            read_escape(r, out) !>
+            continue
+        }
+        out.write_byte(ch)
+    }
+}
+
+fn read_multiline_literal(r: Reader) String !Error {
+    r.skip(3)
+    if r.peek() == '\n' : r.next()
+    else if r.peek() == '\r' && r.peek_at(1) == '\n' : r.skip(2)
+
+    let out = ByteBuffer.new(64)
+    while true {
+        if r.done() : r.fail("A multi-line string was not closed")
+        if r.starts_with("'''") {
+            r.skip(3)
+            return out.to_string()
+        }
+        out.write_byte(r.next())
+    }
+}
+
+fn read_escape(r: Reader, out: ByteBuffer) !Error {
+    let ch = r.next()
+    if ch == 'n' : out.write_byte('\n')
+    else if ch == 't' : out.write_byte('\t')
+    else if ch == 'r' : out.write_byte('\r')
+    else if ch == '"' : out.write_byte('"')
+    else if ch == '\\' : out.write_byte('\\')
+    else if ch == 'b' : out.write_byte(8)
+    else if ch == 'f' : out.write_byte(12)
+    else if ch == 'e' : out.write_byte(27)
+    else if ch == 'u' || ch == 'U' {
+        let digits = ch == 'u' ? 4 : 8
+        let value: uint = 0
+        let i: uint = 0
+        while i++ < digits {
+            let digit = hex_value(r.next()) ! r.fail("A \\u escape needs " + digits + " hex digits")
+            value = (value << 4) | digit.to(uint)
+        }
+        write_utf8(out, value)
+    } else {
+        r.fail("'\\" + ch.to_ascii_string() + "' is not an escape TOML knows")
+    }
+}
+
+fn write_utf8(out: ByteBuffer, code: uint) {
+    if code < 0x80 {
+        out.write_byte(code.to(u8))
+    } else if code < 0x800 {
+        out.write_byte((0xc0 | (code >> 6)).to(u8))
+        out.write_byte((0x80 | (code & 0x3f)).to(u8))
+    } else if code < 0x10000 {
+        out.write_byte((0xe0 | (code >> 12)).to(u8))
+        out.write_byte((0x80 | ((code >> 6) & 0x3f)).to(u8))
+        out.write_byte((0x80 | (code & 0x3f)).to(u8))
+    } else {
+        out.write_byte((0xf0 | (code >> 18)).to(u8))
+        out.write_byte((0x80 | ((code >> 12) & 0x3f)).to(u8))
+        out.write_byte((0x80 | ((code >> 6) & 0x3f)).to(u8))
+        out.write_byte((0x80 | (code & 0x3f)).to(u8))
+    }
+}
+
+fn hex_value(ch: u8) u8 !Error {
+    if ch >= '0' && ch <= '9' : return ch - '0'
+    if ch >= 'a' && ch <= 'f' : return ch - 'a' + 10
+    if ch >= 'A' && ch <= 'F' : return ch - 'A' + 10
+    throw .syntax { message: "'" + ch.to_ascii_string() + "' is not a hex digit" }
+}
+
+// `[1, 2, 3]`, over as many lines as it likes
+fn read_array(r: Reader) json.Value !Error {
+    r.next() // `[`
+    let items = Array[json.Value]{}
+    while true {
+        r.skip_space_and_lines()
+        if r.done() : r.fail("An array was not closed")
+        if r.peek() == ']' {
+            r.next()
+            return json.new_array(items)
+        }
+        items.append(read_value(r) !>)
+        r.skip_space_and_lines()
+        if r.peek() == ',' {
+            r.next()
+            continue
+        }
+        if r.peek() == ']' {
+            r.next()
+            return json.new_array(items)
+        }
+        r.fail("Expected ',' or ']' in an array")
+    }
+}
+
+// `{ a = 1, b = "two" }`, which stays on one line
+fn read_inline_table(r: Reader) json.Value !Error {
+    r.next() // `{`
+    let table = json.new_object()
+    let value_of_table: json.Value = table
+    r.skip_spaces()
+    if r.peek() == '}' {
+        r.next()
+        return value_of_table
+    }
+    while true {
+        r.skip_spaces()
+        let path = read_key_path(r) !>
+        r.skip_spaces()
+        if r.next() != '=' : r.fail("Expected '=' after a key")
+        r.skip_spaces()
+        let value = read_value(r) !>
+        set_key(r, table, path, value) !>
+        r.skip_spaces()
+        let ch = r.peek()
+        if ch == ',' {
+            r.next()
+            continue
+        }
+        if ch == '}' {
+            r.next()
+            return value_of_table
+        }
+        r.fail("Expected ',' or '}' in an inline table")
+    }
+}

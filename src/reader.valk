@@ -1,0 +1,93 @@
+// The cursor over the text: bytes, lines and columns, and the small reads every part needs.
+class Reader {
+    text: String
+    at: uint (0)
+    line: uint (1)
+    column: uint (1)
+
+    fn done() bool {
+        return this.at >= this.text.length
+    }
+    fn peek() u8 {
+        if this.done() : return 0
+        return this.text[this.at]
+    }
+    fn peek_at(ahead: uint) u8 {
+        let index = this.at + ahead
+        if index >= this.text.length : return 0
+        return this.text[index]
+    }
+    fn next() u8 {
+        if this.done() : return 0
+        let ch = this.text[this.at++]
+        if ch == '\n' {
+            this.line++
+            this.column = 1
+        } else {
+            this.column++
+        }
+        return ch
+    }
+    fn skip(amount: uint) {
+        let i: uint = 0
+        while i++ < amount : this.next()
+    }
+    fn starts_with(part: String) bool {
+        if this.at + part.length > this.text.length : return false
+        let i: uint = 0
+        while i < part.length {
+            if this.text[this.at + i] != part[i] : return false
+            i++
+        }
+        return true
+    }
+
+    // Spaces and tabs, but not the end of a line: TOML cares where a line ends
+    fn skip_spaces() {
+        while !this.done() {
+            let ch = this.peek()
+            if ch == ' ' || ch == '\t' : this.next()
+            else : break
+        }
+    }
+    // Everything that may sit between two values: spaces, comments and line ends
+    fn skip_space_and_lines() {
+        while !this.done() {
+            let ch = this.peek()
+            if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+                this.next()
+                continue
+            }
+            if ch == '#' {
+                while !this.done() && this.peek() != '\n' : this.next()
+                continue
+            }
+            break
+        }
+    }
+    // The rest of a line after a value: spaces, a comment, then the line must end
+    fn end_of_line() !Error {
+        this.skip_spaces()
+        if this.peek() == '#' {
+            while !this.done() && this.peek() != '\n' : this.next()
+        }
+        if this.done() : return
+        let ch = this.peek()
+        if ch == '\n' {
+            this.next()
+            return
+        }
+        if ch == '\r' && this.peek_at(1) == '\n' {
+            this.skip(2)
+            return
+        }
+        this.fail("Expected the end of the line, found '" + ch.to_ascii_string() + "'")
+    }
+
+    fn fail(message: String) !Error $throw {
+        throw .syntax { message: message, line: this.line, column: this.column }
+    }
+    fn fail_duplicate(message: String) !Error $throw {
+        throw .duplicate { message: message, line: this.line, column: this.column }
+    }
+}

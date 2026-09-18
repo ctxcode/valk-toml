@@ -1,0 +1,90 @@
+use valk.json
+
+// Numbers, dates and times. TOML has date types of its own, and JSON has none, so a date comes
+// through as the text it was written as: `1979-05-27T07:32:00Z` stays exactly that.
+
+fn read_number_or_date(r: Reader) json.Value !Error {
+    // How far this value runs: to a comma, a bracket, a comment or the end of the line
+    let start = r.at
+    let end = start
+    let text = r.text
+    while end < text.length {
+        let ch = text[end]
+        if ch == ',' || ch == ']' || ch == '}' || ch == '#' || ch == '\n' || ch == '\r' : break
+        end++
+    }
+    let raw = text.range(start, end - start)
+    // Spaces after the value belong to the line, not to the number — except inside a date and
+    // time written with a space between them
+    let word = trim_value(raw)
+    if word.length == 0 : r.fail("Expected a value")
+
+    r.skip(word.length)
+
+    if looks_like_date(word) : return json.new_string(word)
+    if word == "inf" || word == "+inf" : return json.new_float(parse_float("inf") !? 0)
+    if word == "-inf" : return json.new_float(parse_float("-inf") !? 0)
+    if word == "nan" || word == "+nan" || word == "-nan" : return json.new_float(parse_float("nan") !? 0)
+
+    let cleaned = word.replace("_", "")
+    if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
+        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 16) !>)
+    }
+    if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
+        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 8) !>)
+    }
+    if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
+        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 2) !>)
+    }
+
+    if cleaned.contains(".") || cleaned.contains("e") || cleaned.contains("E") {
+        let number = parse_float(cleaned) ! r.fail("'" + word + "' is not a number")
+        return json.new_float(number)
+    }
+    let whole = cleaned.to_int() ! r.fail("'" + word + "' is not a number")
+    return json.new_int(whole)
+}
+
+// A date and time may carry a space in the middle: `1979-05-27 07:32:00`
+fn trim_value(raw: String) String {
+    let text = raw.rtrim(" ").rtrim("\t")
+    let space = text.index_of_byte(' ') !? 0
+    if space == 0 : return text
+    // A space is part of the value only between a date and a time
+    let before = text.range(0, space)
+    let after = text.range(space + 1, text.length - space - 1).rtrim(" ")
+    if looks_like_date(before) && after.length > 0 && after[0] >= '0' && after[0] <= '9' && after.contains(":") {
+        return before + " " + after
+    }
+    return before
+}
+
+// `1979-05-27`, `07:32:00`, `1979-05-27T07:32:00Z`, and the same with a space or an offset
+fn looks_like_date(word: String) bool {
+    if word.length < 8 : return false
+    let digits_and_dashes = word.length >= 10 && word[4] == '-' && word[7] == '-'
+    let time_only = word.length >= 8 && word[2] == ':' && word[5] == ':'
+    return digits_and_dashes || time_only
+}
+
+fn parse_base(r: Reader, digits: String, base: uint) int !Error {
+    if digits.length == 0 : r.fail("A number in base " + base + " needs digits")
+    let value: int = 0
+    each digits as ch {
+        let digit = digit_value(ch)
+        if digit >= base : r.fail("'" + ch.to_ascii_string() + "' is not a digit in base " + base)
+        value = value * base.to(int) + digit.to(int)
+    }
+    return value
+}
+
+fn digit_value(ch: u8) uint {
+    if ch >= '0' && ch <= '9' : return (ch - '0').to(uint)
+    if ch >= 'a' && ch <= 'f' : return (ch - 'a' + 10).to(uint)
+    if ch >= 'A' && ch <= 'F' : return (ch - 'A' + 10).to(uint)
+    return 99
+}
+
+fn parse_float(text: String) float !SyntaxError {
+    return text.to_float() !>
+}
