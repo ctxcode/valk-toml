@@ -54,7 +54,9 @@ println(config["server"]["port"].int)
 
 Reads TOML into a class or struct of your own.
 
-Every field must be in the text, unless it is nullable or has a default.
+Every field must be in the text, unless it is nullable or has a default. A value that does
+not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
+`line` and `column` are only set for syntax errors.
 
 ```valk
 class Settings {

@@ -1,0 +1,46 @@
+use valk.json
+
+@ignore_access
+
+// `value` as `T`; a value that does not fit throws `.type` naming the key at `path`
+fn value_to[T](value: json.Value, path: String) T !Error {
+    #if T.$is_nullable
+    if value.is_null : return null
+    #end
+    #if T.$nonnull.$is_type_of(json.Value) || T.$nonnull.$is_type_of(String) || T.$is_integer || T.$is_float || T.$is_bool || T.$has_method(from_json_value) || T.$has_method(from_json_value_auto) || !T.$is_structural
+    return value.to_type[T]() ! throw .type { message: "'" + path + "' should be " + expected_kind[T]() }
+    #else
+    if !value.is_object : throw .type { message: "'" + path + "' should be a table" }
+    let source = value.object
+    let result = T {
+        #loop properties T as prop
+        prop: <{
+            let key = path.is_empty() ? prop.name : path + "." + prop.name
+            #if prop.$has_explicit_default_value || prop.$type.$is_nullable
+            let field = source.get(prop.name) ! return prop.$default_value
+            if field.is_null : return prop.$default_value
+            return value_to[prop](field, key) !>
+            #else
+            let field = source.get(prop.name) ! throw .type { message: "'" + key + "' is missing" }
+            return value_to[prop](field, key) !>
+            #end
+        }
+        #end
+    }
+    return result
+    #end
+}
+
+fn expected_kind[T]() String {
+    #if T.$nonnull.$is_type_of(String)
+    return "a string"
+    #elif T.$is_integer
+    return "an integer that fits the field"
+    #elif T.$is_float
+    return "a number"
+    #elif T.$is_bool
+    return "true or false"
+    #else
+    return "a value of the field's type"
+    #end
+}

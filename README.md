@@ -29,14 +29,19 @@ class Settings {
     server: Server
 }
 
-let settings = toml.decode_to[Settings](fs.read("config.toml") !!) ! panic("%{E.message} at line %{E.line}")
-println(settings.server.port)
+fn main() {
+    let text = fs.read("config.toml") ! panic("Cannot read config.toml")
+    let settings = toml.decode_to[Settings](text) ! panic(E.message)
+    println(settings.server.port)
 
-fs.write("config.toml", toml.encode_of(settings)) ! panic("%{E.message}")
+    fs.write("config.toml", toml.encode_of(settings)) ! panic("Cannot write config.toml")
+}
 ```
 
 Every field of the class must be in the file, unless it is nullable or has a default — so a
-missing setting is an error you read once, rather than a zero you chase later.
+missing setting is an error you read once, rather than a zero you chase later. The message
+names the key: `'server.host' is missing`, `'server.port' should be an integer that fits the
+field`. A syntax error also sets `E.line` and `E.column`.
 
 ## When the shape is not fixed
 

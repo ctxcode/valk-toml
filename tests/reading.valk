@@ -186,9 +186,19 @@ test "Reading into a class" {
     assert(fewer.server.port == 8080)
     assert(!fewer.debug)
 
-    // A field that is needed and not there is an error, not a zero
-    toml.decode_to[Settings]("debug = true\n") ! {
+    // A field that is needed and not there is an error, not a zero, and it is named
+    let missing = toml.decode_to[Settings]("name = \"x\"\n[server]\nport = 1\n") ! {
         assert(error_is(E.code, type))
+        assert(E.message == "'server.host' is missing")
+        return
+    }
+    assert(false)
+}
+
+test "A value of the wrong type names its key" {
+    toml.decode_to[Settings]("name = \"x\"\n[server]\nhost = \"h\"\nport = \"80\"\n") ! {
+        assert(error_is(E.code, type))
+        assert(E.message == "'server.port' should be an integer that fits the field")
         return
     }
     assert(false)

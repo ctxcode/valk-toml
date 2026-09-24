@@ -50,7 +50,9 @@ use valk.json
 
 /// Reads TOML into a class or struct of your own.
 ///
-/// Every field must be in the text, unless it is nullable or has a default.
+/// Every field must be in the text, unless it is nullable or has a default. A value that does
+/// not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
+/// `line` and `column` are only set for syntax errors.
 ///
 /// ```valk
 /// class Settings {
@@ -62,9 +64,7 @@ use valk.json
 /// ```
 + fn decode_to[T](text: String) T !Error {
     let document = decode(text) !>
-    return document.to_type[T]() ! {
-        throw .type { message: "This TOML does not fit the type it was read into" }
-    }
+    return value_to[T](document, "") !>
 }
 
 // `[a.b]` or `[[a.b]]`
