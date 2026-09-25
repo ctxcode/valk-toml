@@ -1,5 +1,6 @@
 use toml
 use valk.json
+use valk.time
 
 class WriteServer {
     host: String
@@ -81,4 +82,27 @@ test "Writing tables and arrays of tables" {
     assert(back["servers"][1]["name"].string == "beta")
     assert(back["database"]["pool"].int == 4)
     assert(back["database"]["tls"]["on"].bool)
+}
+
+class Stamp {
+    name: String
+    at: time.DateTime
+    seen: ?time.DateTime (null)
+    days: Array[time.DateTime] (.{})
+}
+
+test "Writing DateTime fields" {
+    let at = time.DateTime.new(1979, 5, 27, 7, 32, 0, 250000) ! { assert(false) return }
+    let day = time.DateTime.new(2024, 1, 1) ! { assert(false) return }
+    let stamp = Stamp { name: "x", at: at, days: .{ day } }
+    let text = toml.encode_of(stamp)
+    // A date and time in UTC, not a quoted string; a null field is left out
+    assert(text.contains("at = 1979-05-27T07:32:00.250000Z"))
+    assert(text.contains("days = [2024-01-01T00:00:00Z]"))
+    assert(!text.contains("seen"))
+
+    let back = toml.decode_to[Stamp](text) ! { println(E.message) assert(false) return }
+    assert(back.at.unix_us() == at.unix_us())
+    assert(!isset(back.seen))
+    assert((back.days.get(0) !!).unix_us() == day.unix_us())
 }

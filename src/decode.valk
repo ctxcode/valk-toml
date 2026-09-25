@@ -3,7 +3,7 @@ use valk.json
 /// Reads TOML and returns it as a `json.Value`, so everything that works with JSON works with it.
 ///
 /// Dates and times come through as the text they were written as; TOML has types for them and
-/// JSON does not.
+/// JSON does not. `decode_to` reads them into `time.DateTime` fields.
 ///
 /// ```valk
 /// let config = toml.decode(fs.read("config.toml") !!) ! panic("%{E.message}")
@@ -52,7 +52,8 @@ use valk.json
 ///
 /// Every field must be in the text, unless it is nullable or has a default. A value that does
 /// not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
-/// `line` and `column` are only set for syntax errors.
+/// `line` and `column` are only set for syntax errors. A `time.DateTime` field takes a date, or a
+/// date and time, converted to UTC.
 ///
 /// ```valk
 /// class Settings {

@@ -64,9 +64,15 @@ literal strings with their multi-line forms and escapes, integers in decimal, he
 binary with `_` separators, floats with exponents and `inf`/`nan`, booleans, arrays over as many
 lines as they like, inline tables, `[table]`, `[a.nested.table]` and `[[arrays of tables]]`.
 
-Dates and times come through as the text they were written as — `1979-05-27T07:32:00Z` stays
-exactly that — because TOML has types for them and JSON has none. Read them with
-`time.DateTime.from_format` where you need them as a date.
+In your own classes, a `time.DateTime` field (or `?time.DateTime`, or `Array[time.DateTime]`)
+takes a TOML date or date and time. One with an offset is converted to UTC, one without is taken
+as UTC, and a date alone is its midnight; a time of day on its own does not fit a `DateTime`.
+`encode_of` writes such a field as a date and time in UTC, and leaves out fields that are null.
+Inside an array of tables, dates are read by the standard library's `json` package instead,
+which does so from Valk 0.7.8 on and keeps an offset as written.
+
+`decode` passes dates through as the text they were written as — `1979-05-27T07:32:00Z` stays
+exactly that — because TOML has types for them and JSON has none.
 
 ## Errors
 

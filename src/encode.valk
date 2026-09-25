@@ -17,16 +17,18 @@ use valk.json
     return out.to_string()
 }
 
-/// Writes a class or struct of your own as TOML, the way `json.from` would read it.
+/// Writes a class or struct of your own as TOML, the way `json.from` would read it; a
+/// `time.DateTime` field is written as a TOML date and time in UTC.
 + fn encode_of(value: $T) String {
-    return encode(json.from(value))
+    return encode(value_from(value, Array[uint]{}))
 }
 
 // The keys of a table, then the tables under it
 fn write_table(out: ByteBuffer, table: json.ObjectValue, path: Array[String]) {
-    // Plain values first: a table header would otherwise swallow them
+    // Plain values first: a table header would otherwise swallow them. TOML has no null, so a
+    // null is left out, which reads back as a field's default.
     each table.values as value, key {
-        if is_table(value) || is_table_array(value) : continue
+        if value.is_null || is_table(value) || is_table_array(value) : continue
         out.write(encode_key(key))
         out.write(" = ")
         out.write(encode_inline(value))
@@ -69,7 +71,10 @@ fn write_table(out: ByteBuffer, table: json.ObjectValue, path: Array[String]) {
 // A value as it is written on one line
 fn encode_inline(value: json.Value) String {
     match value {
-        String as text => return encode_string(text)
+        String as text => {
+            if text.starts_with(DATE_MARK) : return text.range(DATE_MARK.length, text.length - DATE_MARK.length)
+            return encode_string(text)
+        }
         int as number => return number.to(String)
         float as number => return number.to_shortest_string()
         bool as yes => return yes ? "true" : "false"
@@ -86,8 +91,11 @@ fn encode_inline(value: json.Value) String {
         json.ObjectValue as object => {
             let out = ByteBuffer.new(32)
             out.write("{ ")
-            each object.values as item, key, index {
-                if index > 0 : out.write(", ")
+            let first = true
+            each object.values as item, key {
+                if item.is_null : continue
+                if !first : out.write(", ")
+                first = false
                 out.write(encode_key(key))
                 out.write(" = ")
                 out.write(encode_inline(item))

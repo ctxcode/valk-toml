@@ -34,7 +34,7 @@ shown against the file.
 + fn decode_to[T](text: String) T !Error
 // Writes a `json.Value` as TOML.
 + fn encode(value: Value) String
-// Writes a class or struct of your own as TOML, the way `json.from` would read it.
+// Writes a class or struct of your own as TOML, the way `json.from` would read it; a `time.DateTime` field is written as a TOML date and time in UTC.
 + fn encode_of(value: $T) String
 ```
 
@@ -43,7 +43,7 @@ shown against the file.
 Reads TOML and returns it as a `json.Value`, so everything that works with JSON works with it.
 
 Dates and times come through as the text they were written as; TOML has types for them and
-JSON does not.
+JSON does not. `decode_to` reads them into `time.DateTime` fields.
 
 ```valk
 let config = toml.decode(fs.read("config.toml") !!) ! panic("%{E.message}")
@@ -56,7 +56,8 @@ Reads TOML into a class or struct of your own.
 
 Every field must be in the text, unless it is nullable or has a default. A value that does
 not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
-`line` and `column` are only set for syntax errors.
+`line` and `column` are only set for syntax errors. A `time.DateTime` field takes a date, or a
+date and time, converted to UTC.
 
 ```valk
 class Settings {
@@ -80,4 +81,5 @@ fs.write("config.toml", toml.encode(settings)) ! panic("%{E.message}")
 
 ### encode_of
 
-Writes a class or struct of your own as TOML, the way `json.from` would read it.
+Writes a class or struct of your own as TOML, the way `json.from` would read it; a
+`time.DateTime` field is written as a TOML date and time in UTC.

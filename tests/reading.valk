@@ -1,5 +1,6 @@
 use toml
 use valk.json
+use valk.time
 
 test "Values" {
     let document = toml.decode("
@@ -231,4 +232,41 @@ test "What is not TOML" {
         return
     }
     assert(false)
+}
+
+class Release {
+    name: String
+    published: time.DateTime
+    checked: ?time.DateTime (null)
+    days: Array[time.DateTime] (.{})
+}
+
+test "Dates into DateTime fields" {
+    let release = toml.decode_to[Release]("
+        name = \"one\"
+        published = 1979-05-27T00:32:00-07:00
+        days = [1979-05-27, 1979-05-28t10:00:00z, 1979-05-28 10:00:30.5, 1979-05-28T10:15]
+    ") ! { println(E.message) assert(false) return }
+    // The offset is taken off: 07:32 in UTC
+    assert(release.published.unix_seconds() == 296638320)
+    assert(!isset(release.checked))
+    assert(release.days.length == 4)
+    // A date alone is its midnight, one without an offset is taken as UTC, seconds may be left out
+    let midnight = release.days.get(0) !!
+    assert(midnight.hour() == 0 && midnight.day() == 27)
+    assert((release.days.get(1) !!).hour() == 10)
+    let fraction = release.days.get(2) !!
+    assert(fraction.second() == 30 && fraction.microsecond() == 500000)
+    assert((release.days.get(3) !!).minute() == 15)
+
+    // A time of day, text that is not a date, and a number are not dates
+    let texts = Array[String]{ "published = 07:32:00", "published = \"soon\"", "published = 1979-13-01", "published = 12" }
+    each texts as text {
+        toml.decode_to[Release]("name = \"x\"\n" + text) ! {
+            assert(error_is(E.code, type))
+            assert(E.message == "'published' should be a date, or a date and time")
+            continue
+        }
+        assert(false)
+    }
 }

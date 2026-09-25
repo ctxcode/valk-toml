@@ -23,6 +23,6 @@ Namespaces: [main](#main)
 + fn decode_to[T](text: String) T !Error
 // Writes a `json.Value` as TOML.
 + fn encode(value: Value) String
-// Writes a class or struct of your own as TOML, the way `json.from` would read it.
+// Writes a class or struct of your own as TOML, the way `json.from` would read it; a `time.DateTime` field is written as a TOML date and time in UTC.
 + fn encode_of(value: $T) String
 ```
