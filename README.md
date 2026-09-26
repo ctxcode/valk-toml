@@ -38,9 +38,8 @@ fn main() {
 }
 ```
 
-Every field of the class must be in the file, unless it is nullable or has a default — so a
-missing setting is an error you read once, rather than a zero you chase later. The message
-names the key: `'server.host' is missing`, `'server.port' should be an integer that fits the
+Every field of the class must be in the file, unless it is nullable or has a default. The
+error names the key: `'server.host' is missing`, `'server.port' should be an integer that fits the
 field`. A syntax error also sets `E.line` and `E.column`.
 
 ## When the shape is not fixed
@@ -68,11 +67,11 @@ In your own classes, a `time.DateTime` field (or `?time.DateTime`, or `Array[tim
 takes a TOML date or date and time. One with an offset is converted to UTC, one without is taken
 as UTC, and a date alone is its midnight; a time of day on its own does not fit a `DateTime`.
 `encode_of` writes such a field as a date and time in UTC, and leaves out fields that are null.
-Inside an array of tables, dates are read by the standard library's `json` package instead,
-which does so from Valk 0.7.8 on and keeps an offset as written.
+Dates inside an array of tables need Valk 0.7.8 or newer, and keep their offset rather than being
+converted to UTC.
 
-`decode` passes dates through as the text they were written as — `1979-05-27T07:32:00Z` stays
-exactly that — because TOML has types for them and JSON has none.
+`decode` passes dates through as the text they were written as: `1979-05-27T07:32:00Z` stays
+exactly that.
 
 ## Errors
 
