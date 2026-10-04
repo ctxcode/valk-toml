@@ -88,6 +88,14 @@ toml.decode(text) ! {
 // A string was not closed before the end of the line (line 2, column 1)
 ```
 
+## Not supported
+
+- A strict TOML 1.0 mode: the 1.1 additions (inline tables over several lines, `\e` and `\x`
+  escapes, times without seconds) are always accepted.
+- Floats too large for a 64-bit float, such as `1e400`, are an error rather than `inf`.
+- `decode` gives dates as strings, so `encode(decode(text))` writes them back quoted.
+- TOML has no null: `encode` leaves out a null key and writes a null inside an array as `""`.
+
 ## Development
 
 `make test` runs the suite, `make example` runs the example, `make lint` checks the sources and
