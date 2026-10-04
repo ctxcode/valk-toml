@@ -84,6 +84,24 @@ test "Writing tables and arrays of tables" {
     assert(back["database"]["tls"]["on"].bool)
 }
 
+test "Floats stay floats" {
+    let document: json.Value = json.new_object()
+    document = document.set("whole", json.new_float(2.0))
+    document = document.set("negative_zero", json.new_float(-0.0))
+    document = document.set("big", json.new_float(1e300))
+    document = document.set("del", json.new_string("a\x7fb"))
+    let text = toml.encode(document)
+    assert(text.contains("whole = 2.0\n"))
+    assert(text.contains("negative_zero = -0.0\n"))
+    assert(text.contains("big = 1e300\n"))
+    assert(text.contains("del = \"a\\u007fb\"\n"))
+
+    let back = toml.decode(text) ! { println(E.message) assert(false) return }
+    assert(back["whole"].is_float)
+    assert(back["whole"].float == 2.0)
+    assert(back["del"].string == "a\x7fb")
+}
+
 class Stamp {
     name: String
     at: time.DateTime
