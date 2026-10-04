@@ -260,7 +260,7 @@ test "Dates into DateTime fields" {
     assert((release.days.get(3) !!).minute() == 15)
 
     // A time of day, text that is not a date, and a number are not dates
-    let texts = Array[String]{ "published = 07:32:00", "published = \"soon\"", "published = 1979-13-01", "published = 12" }
+    let texts = Array[String]{ "published = 07:32:00", "published = \"soon\"", "published = 12" }
     each texts as text {
         toml.decode_to[Release]("name = \"x\"\n" + text) ! {
             assert(error_is(E.code, type))
@@ -269,4 +269,10 @@ test "Dates into DateTime fields" {
         }
         assert(false)
     }
+    // A date that does not exist is not TOML
+    toml.decode_to[Release]("name = \"x\"\npublished = 1979-13-01") ! {
+        assert(error_is(E.code, syntax))
+        return
+    }
+    assert(false)
 }

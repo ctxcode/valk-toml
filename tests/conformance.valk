@@ -1,0 +1,118 @@
+use toml
+
+fn reads(text: String) bool {
+    toml.decode(text) ! return false
+    return true
+}
+
+test "Tables are defined once, by one kind of definition" {
+    // Names are compared as keys, not as joined text
+    assert(reads("[a.b.c]\nx = 1\n[a.\"b.c\"]\nx = 2\n"))
+    // A parent made by a header may still be defined later, and a header may add under a dotted table
+    assert(reads("[a.b.c]\nz = 9\n[a]\nx = 1\n"))
+    assert(reads("[fruit]\napple.color = \"red\"\n[fruit.apple.texture]\nsmooth = true\n"))
+    assert(reads("[[a]]\n[a.b]\nx = 1\n[[a]]\n[a.b]\nx = 2\n"))
+    assert(reads("a.b = 1\na.c = 2\n"))
+
+    // A table made by dotted keys cannot be opened by a header, nor one made by a header by dotted keys
+    assert(!reads("[fruit]\napple.color = \"red\"\n[fruit.apple]\n"))
+    assert(!reads("[a.b.c]\nz = 9\n[a]\nb.c.t = 1\n"))
+    assert(!reads("[[a.b]]\n[a]\nb.y = 2\n"))
+    assert(!reads("[[tab.arr]]\n[tab]\narr.val1 = 1\n"))
+    // Arrays of values and inline tables are closed
+    assert(!reads("fruit = []\n[[fruit]]\n"))
+    assert(!reads("a = [{ b = 1 }]\n[a.c]\n"))
+    assert(!reads("a = {}\n[a.b]\n"))
+    assert(!reads("t = { a = { b = 1 }, a.c = 2 }\n"))
+    assert(!reads("[product]\ntype = { name = \"Nail\" }\ntype.edible = false\n"))
+    // A table and an array of tables of the same name
+    assert(!reads("[a]\n[[a]]\n"))
+    assert(!reads("[[a]]\n[a]\n"))
+}
+
+test "Strings" {
+    let doc = toml.decode("
+a = \"\"\"x\"\"\"\"\"
+b = '''it''''
+c = \"\"\"one \\
+    # not a comment
+    two\"\"\"
+d = \"\\U0001F600 \\x41\"
+") ! { println(E.message) assert(false) return }
+    assert(doc["a"].string == "x\"\"")
+    assert(doc["b"].string == "it'")
+    assert(doc["c"].string == "one # not a comment\n    two")
+    assert(doc["d"].string == "😀 A")
+
+    assert(!reads("a = \"\"\"x\"\"\"\"\"\"\n"))
+    assert(!reads("a = \"\\uD800\"\n"))
+    assert(!reads("a = \"\\U00110000\"\n"))
+    assert(!reads("\"\"\"key\"\"\" = 1\n"))
+    // Control characters, raw or in a comment, and a carriage return on its own
+    assert(!reads("a = \"x\x01\"\n"))
+    assert(!reads("a = 'x\x7f'\n"))
+    assert(!reads("a = '''x\x00'''\n"))
+    assert(!reads("a = 1 # \x7f\n"))
+    assert(!reads("a = 1\rb = 2\n"))
+    assert(reads("a = 1\r\nb = \"\"\"x\r\ny\"\"\"\r\n"))
+    // Text that is not UTF-8
+    assert(!reads("a = \"\xff\"\n"))
+    assert(!reads("# \xc0\xaf\n"))
+}
+
+test "Numbers" {
+    let doc = toml.decode("
+a = 0x7fff_ffff_ffff_ffff
+b = -0
+c = +1_000
+d = 1e1_0
+e = -0.0
+f = 0o17
+") ! { println(E.message) assert(false) return }
+    assert(doc["a"].int == 9223372036854775807)
+    assert(doc["b"].int == 0)
+    assert(doc["c"].int == 1000)
+    assert(doc["d"].float == 1e10)
+    assert(doc["f"].int == 15)
+
+    let wrong = Array[String]{ "012", "-012", "1__0", "_1", "1_", "0X1", "0xg", "0x_1", "+0x1",
+        "0x8000_0000_0000_0000", "9223372036854775808", ".5", "5.", "1._5", "1e", "1e_5", "1.e5", "03.14", "inf_", "nan1" }
+    each wrong as number {
+        if reads("a = " + number + "\n") : println("read: " + number)
+        assert(!reads("a = " + number + "\n"))
+    }
+}
+
+test "Dates and times" {
+    let good = Array[String]{ "2000-02-29", "1979-05-27T23:59:60Z", "1979-05-27 07:32:00.999+05:30", "07:32:00.5", "07:32", "1979-05-27T07:32" }
+    each good as date {
+        if !reads("a = " + date + "\n") : println("not read: " + date)
+        assert(reads("a = " + date + "\n"))
+    }
+    let wrong = Array[String]{ "1900-02-29", "2023-04-31", "2023-00-01", "2023-01-00", "1979-05-27T24:00:00", "07:60:00",
+        "07:00:61", "1979-05-27T07:32:00+24:00", "1979-05-27T07:32:00+05", "1979-05-27T", "1979-05-2707:32:00", "07:32:00.", "7:32:00", "07:32:00Z" }
+    each wrong as date {
+        if reads("a = " + date + "\n") : println("read: " + date)
+        assert(!reads("a = " + date + "\n"))
+    }
+}
+
+test "Inline tables over lines (TOML 1.1)" {
+    let doc = toml.decode("
+point = {
+    x = 1, # the first
+    y = 2,
+}
+") ! { println(E.message) assert(false) return }
+    assert(doc["point"]["y"].int == 2)
+    assert(!reads("a = { , }\n"))
+    assert(!reads("a = { x = 1,, }\n"))
+}
+
+test "Nesting has a limit" {
+    let deep = ByteBuffer.new(4096)
+    deep.write("a = ")
+    let i = 0
+    while i++ < 1000 : deep.write_byte('[')
+    assert(!reads(deep.to_string()))
+}

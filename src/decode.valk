@@ -11,28 +11,22 @@ use valk.json
 /// ```
 + fn decode(text: String) json.Value !Error {
     let r = Reader { text: text }
+    check_utf8(r) !>
     let root = json.new_object()
+    r.kinds.set(node_id(root), Kind.header)
     // The table the keys that follow are written into
     let current = root
-    // The `[table]` headers that have been seen, so that one written twice is caught
-    let opened: Map[bool] = .{}
 
     while true {
-        r.skip_space_and_lines()
+        r.skip_space_and_lines() !>
         if r.done() : break
 
         if r.peek() == '[' {
             let is_array = r.peek_at(1) == '['
             let path = read_table_header(r, is_array) !>
             r.end_of_line() !>
-            if is_array {
-                current = open_array_table(r, root, path) !>
-            } else {
-                let key = path.join(".")
-                if opened.has(key) : r.fail_duplicate("The table '" + key + "' is given twice")
-                opened.set(key, true)
-                current = open_table(r, root, path) !>
-            }
+            if is_array : current = open_array_table(r, root, path) !>
+            else : current = open_table(r, root, path) !>
             continue
         }
 
@@ -87,6 +81,7 @@ fn read_key_path(r: Reader) Array[String] !Error {
         r.skip_spaces()
         let ch = r.peek()
         if ch == '"' || ch == '\'' {
+            if r.starts_with("\"\"\"") || r.starts_with("'''") : r.fail("A key cannot be a multi-line string")
             path.append(read_string(r) !>)
         } else {
             let out = ByteBuffer.new(16)
@@ -115,4 +110,46 @@ fn is_bare_key_byte(ch: u8) bool {
     if ch >= 'A' && ch <= 'Z' : return true
     if ch >= '0' && ch <= '9' : return true
     return ch == '_' || ch == '-'
+}
+
+// TOML text is UTF-8; anything else is refused before it is read
+fn check_utf8(r: Reader) !Error {
+    let text = r.text
+    let i: uint = 0
+    while i < text.length {
+        let ch = text[i]
+        if ch < 0x80 {
+            i++
+            continue
+        }
+        let size: uint = 0
+        let low: u8 = 0x80
+        let high: u8 = 0xbf
+        if ch >= 0xc2 && ch <= 0xdf : size = 2
+        else if ch >= 0xe0 && ch <= 0xef {
+            size = 3
+            if ch == 0xe0 : low = 0xa0
+            if ch == 0xed : high = 0x9f
+        } else if ch >= 0xf0 && ch <= 0xf4 {
+            size = 4
+            if ch == 0xf0 : low = 0x90
+            if ch == 0xf4 : high = 0x8f
+        }
+        let ok = size > 0 && i + size <= text.length
+        if ok {
+            let second = text[i + 1]
+            if second < low || second > high : ok = false
+            let k: uint = 2
+            while ok && k < size {
+                let next = text[i + k]
+                if next < 0x80 || next > 0xbf : ok = false
+                k++
+            }
+        }
+        if !ok {
+            r.skip(i)
+            r.fail("The text is not valid UTF-8")
+        }
+        i += size
+    }
 }

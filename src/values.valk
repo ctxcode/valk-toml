@@ -2,11 +2,18 @@ use valk.json
 
 // Reading one value: a string, a number, a bool, a date, an array or an inline table.
 
+value MAX_DEPTH (256)
+
 fn read_value(r: Reader) json.Value !Error {
     let ch = r.peek()
     if ch == '"' || ch == '\'' : return json.new_string(read_string(r) !>)
-    if ch == '[' : return read_array(r) !>
-    if ch == '{' : return read_inline_table(r) !>
+    if ch == '[' || ch == '{' {
+        // Deep nesting would run out of stack
+        if r.depth++ >= MAX_DEPTH : r.fail("Arrays and inline tables are nested more than " + MAX_DEPTH + " deep")
+        let value = ch == '[' ? read_array(r) !> : read_inline_table(r) !>
+        r.depth--
+        return value
+    }
     if ch == 't' || ch == 'f' : return read_bool(r) !>
     return read_number_or_date(r) !>
 }
@@ -43,6 +50,7 @@ fn read_basic(r: Reader) String !Error {
             read_escape(r, out) !>
             continue
         }
+        if is_control(ch) : r.fail("A string may not hold control characters; escape them")
         out.write_byte(ch)
     }
 }
@@ -55,6 +63,7 @@ fn read_literal(r: Reader) String !Error {
         let ch = r.next()
         if ch == '\'' : return out.to_string()
         if ch == '\n' : r.fail("A string was not closed before the end of the line")
+        if is_control(ch) : r.fail("A string may not hold control characters")
         out.write_byte(ch)
     }
 }
@@ -68,39 +77,29 @@ fn read_multiline_basic(r: Reader) String !Error {
     let out = ByteBuffer.new(64)
     while true {
         if r.done() : r.fail("A multi-line string was not closed")
-        if r.starts_with("\"\"\"") {
-            r.skip(3)
-            // Up to two more quotes belong to the string itself
-            while r.peek() == '"' && out.length < uint.$max {
-                out.write_byte(r.next())
-                if out.length > 0 && r.peek() != '"' : break
-            }
-            return out.to_string()
+        if r.peek() == '"' {
+            let ended = end_multiline(r, out, '"') !>
+            if ended : return out.to_string()
         }
         let ch = r.next()
         if ch == '\\' {
-            // A backslash at the end of a line eats the line break and the spaces after it
-            let ahead = r.peek()
-            if ahead == '\n' || ahead == '\r' || ahead == ' ' || ahead == '\t' {
-                let only_space = true
-                let i: uint = 0
+            // A backslash at the end of a line eats the line break and the white space after it
+            let i: uint = 0
+            while r.peek_at(i) == ' ' || r.peek_at(i) == '\t' : i++
+            let after = r.peek_at(i)
+            if after == '\n' || (after == '\r' && r.peek_at(i + 1) == '\n') {
                 while true {
-                    let c = r.peek_at(i)
-                    if c == ' ' || c == '\t' : i++
-                    else if c == '\n' || c == '\r' : break
-                    else {
-                        only_space = false
-                        break
-                    }
+                    let c = r.peek()
+                    if c == ' ' || c == '\t' || c == '\n' : r.next()
+                    else if c == '\r' && r.peek_at(1) == '\n' : r.skip(2)
+                    else : break
                 }
-                if only_space {
-                    r.skip_space_and_lines()
-                    continue
-                }
+                continue
             }
             read_escape(r, out) !>
             continue
         }
+        check_multiline_byte(r, ch) !>
         out.write_byte(ch)
     }
 }
@@ -113,12 +112,32 @@ fn read_multiline_literal(r: Reader) String !Error {
     let out = ByteBuffer.new(64)
     while true {
         if r.done() : r.fail("A multi-line string was not closed")
-        if r.starts_with("'''") {
-            r.skip(3)
-            return out.to_string()
+        if r.peek() == '\'' {
+            let ended = end_multiline(r, out, '\'') !>
+            if ended : return out.to_string()
         }
-        out.write_byte(r.next())
+        let ch = r.next()
+        check_multiline_byte(r, ch) !>
+        out.write_byte(ch)
     }
+}
+
+// At a quote in a multi-line string: three or more end it, and up to two before those three
+// belong to the string
+fn end_multiline(r: Reader, out: ByteBuffer, quote: u8) bool !Error {
+    let count: uint = 0
+    while r.peek_at(count) == quote : count++
+    if count < 3 : return false
+    if count > 5 : r.fail("Too many quotes at the end of a multi-line string")
+    while count-- > 3 : out.write_byte(r.next())
+    r.skip(3)
+    return true
+}
+
+fn check_multiline_byte(r: Reader, ch: u8) !Error {
+    if ch == '\n' : return
+    if ch == '\r' && r.peek() == '\n' : return
+    if is_control(ch) : r.fail("A string may not hold control characters; escape them")
 }
 
 fn read_escape(r: Reader, out: ByteBuffer) !Error {
@@ -131,13 +150,17 @@ fn read_escape(r: Reader, out: ByteBuffer) !Error {
     else if ch == 'b' : out.write_byte(8)
     else if ch == 'f' : out.write_byte(12)
     else if ch == 'e' : out.write_byte(27)
-    else if ch == 'u' || ch == 'U' {
-        let digits = ch == 'u' ? 4 : 8
+    else if ch == 'u' || ch == 'U' || ch == 'x' {
+        let digits: uint = ch == 'U' ? 8 : (ch == 'u' ? 4 : 2)
         let value: uint = 0
         let i: uint = 0
         while i++ < digits {
-            let digit = hex_value(r.next()) ! r.fail("A \\u escape needs " + digits + " hex digits")
+            let digit = hex_value(r.peek()) ! r.fail("A \\" + ch.to_ascii_string() + " escape needs " + digits + " hex digits")
+            r.next()
             value = (value << 4) | digit.to(uint)
+        }
+        if value > 0x10ffff || (value >= 0xd800 && value <= 0xdfff) {
+            r.fail("A \\" + ch.to_ascii_string() + " escape must be a Unicode scalar value")
         }
         write_utf8(out, value)
     } else {
@@ -175,14 +198,14 @@ fn read_array(r: Reader) json.Value !Error {
     r.next() // `[`
     let items = Array[json.Value]{}
     while true {
-        r.skip_space_and_lines()
+        r.skip_space_and_lines() !>
         if r.done() : r.fail("An array was not closed")
         if r.peek() == ']' {
             r.next()
             return json.new_array(items)
         }
         items.append(read_value(r) !>)
-        r.skip_space_and_lines()
+        r.skip_space_and_lines() !>
         if r.peek() == ',' {
             r.next()
             continue
@@ -195,25 +218,25 @@ fn read_array(r: Reader) json.Value !Error {
     }
 }
 
-// `{ a = 1, b = "two" }`, which stays on one line
+// `{ a = 1, b = "two" }`; TOML 1.1 lets it run over lines and end with a comma
 fn read_inline_table(r: Reader) json.Value !Error {
     r.next() // `{`
     let table = json.new_object()
     let value_of_table: json.Value = table
-    r.skip_spaces()
-    if r.peek() == '}' {
-        r.next()
-        return value_of_table
-    }
     while true {
-        r.skip_spaces()
+        r.skip_space_and_lines() !>
+        if r.done() : r.fail("An inline table was not closed")
+        if r.peek() == '}' {
+            r.next()
+            return value_of_table
+        }
         let path = read_key_path(r) !>
         r.skip_spaces()
         if r.next() != '=' : r.fail("Expected '=' after a key")
         r.skip_spaces()
         let value = read_value(r) !>
         set_key(r, table, path, value) !>
-        r.skip_spaces()
+        r.skip_space_and_lines() !>
         let ch = r.peek()
         if ch == ',' {
             r.next()

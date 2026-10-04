@@ -62,6 +62,8 @@ Everything a configuration file uses: comments, bare and quoted keys, dotted key
 literal strings with their multi-line forms and escapes, integers in decimal, hex, octal and
 binary with `_` separators, floats with exponents and `inf`/`nan`, booleans, arrays over as many
 lines as they like, inline tables, `[table]`, `[a.nested.table]` and `[[arrays of tables]]`.
+It follows TOML 1.1, and so 1.0, and passes the whole [toml-test](https://github.com/toml-lang/toml-test)
+suite for both versions. Arrays and inline tables may be nested 256 deep.
 
 In your own classes, a `time.DateTime` field (or `?time.DateTime`, or `Array[time.DateTime]`)
 takes a TOML date or date and time. One with an offset is converted to UTC, one without is taken

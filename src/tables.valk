@@ -3,25 +3,59 @@ use valk.json
 // Where a value goes. A table is a `json.ObjectValue`, and its members are written into its own
 // map, so `[[servers]]` can hand back the table that the keys after it belong to.
 
-// Walks `path` inside `table`, making the tables that are not there yet, and returns the last
-// one. A step that lands on an array of tables follows its last table, which is what
+// What made a table, which decides what may still be written into it. A table the reader has no
+// kind for is part of an inline table or of an array value, and is closed.
+enum Kind {
+    // The parent of a `[header]`, which a `[header]` of its own may still define
+    implicit
+    // `[name]`, one table of `[[name]]`, or the root
+    header
+    // Made by a dotted key, which more dotted keys may add to and a header may not
+    dotted
+    // The array of `[[name]]`; any other array is a value
+    table_array
+}
+
+fn node_id(node: json.Value) uint {
+    match node {
+        json.ObjectValue as object => return object.@cast(ptr).@cast(uint)
+        json.ArrayValue as array => return array.@cast(ptr).@cast(uint)
+        default => return 0
+    }
+}
+
+fn kind_of(r: Reader, node: json.Value) ?Kind {
+    return r.kinds.get(node_id(node)) !? null
+}
+
+fn make_table(r: Reader, parent: json.ObjectValue, name: String, kind: Kind) json.ObjectValue {
+    let made = json.new_object()
+    parent.values.set(name, made)
+    r.kinds.set(node_id(made), kind)
+    return made
+}
+
+// Walks the path of a `[header]`, making the tables that are not there yet, and returns the
+// last one. A step that lands on an array of tables follows its last table, which is what
 // `[[a]]` then `[a.b]` means.
-fn table_at(r: Reader, table: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
-    let current = table
-    each path as name {
-        if !current.values.has(name) {
-            let made = json.new_object()
-            current.values.set(name, made)
-            current = made
+fn header_parent(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+    let current = root
+    let i: uint = 0
+    while i + 1 < path.length {
+        let name = path.get(i++) !? ""
+        let child = current.values.get(name) ! {
+            current = make_table(r, current, name, Kind.implicit)
             continue
         }
-        let child = current.values.get(name) !? json.new_object()
+        let kind = kind_of(r, child)
         match child {
-            json.ObjectValue as object => current = object
+            json.ObjectValue as object => {
+                if !isset(kind) : r.fail_duplicate("'" + name + "' is an inline table, which cannot be added to")
+                current = object
+            }
             json.ArrayValue as array => {
-                let last = array.values.get(array.values.length - 1) ! {
-                    r.fail_duplicate("'" + name + "' is an empty array, so nothing can be written inside it")
-                }
+                if kind != Kind.table_array : r.fail_duplicate("'" + name + "' is an array value, which cannot be added to")
+                let last = array.values.get(array.values.length - 1) ! r.fail_duplicate("'" + name + "' is an empty array")
                 match last {
                     json.ObjectValue as object => current = object
                     default => r.fail_duplicate("'" + name + "' holds values, not tables")
@@ -33,60 +67,79 @@ fn table_at(r: Reader, table: json.ObjectValue, path: Array[String]) json.Object
     return current
 }
 
-// `key = value` inside the table that is open
+// `key = value` inside the table that is open; a dotted key may only pass through tables that
+// dotted keys made
 fn set_key(r: Reader, table: json.ObjectValue, path: Array[String], value: json.Value) !Error {
     if path.length == 0 : r.fail("A value needs a key")
-    let name = path.get(path.length - 1) !? ""
     let parent = table
-    if path.length > 1 {
-        parent = table_at(r, table, path.range(0, path.length - 1)) !>
+    let i: uint = 0
+    while i + 1 < path.length {
+        let name = path.get(i++) !? ""
+        let child = parent.values.get(name) ! {
+            parent = make_table(r, parent, name, Kind.dotted)
+            continue
+        }
+        let kind = kind_of(r, child)
+        match child {
+            json.ObjectValue as object => {
+                if kind != Kind.dotted : r.fail_duplicate("'" + join_path(path, i) + "' is already defined, so a dotted key cannot add to it")
+                parent = object
+            }
+            default => r.fail_duplicate("'" + join_path(path, i) + "' is a value, so nothing can be written inside it")
+        }
     }
-    if parent.values.has(name) : r.fail_duplicate("'" + path.join(".") + "' is given twice")
+    let name = path.get(path.length - 1) !? ""
+    if parent.values.has(name) : r.fail_duplicate("'" + join_path(path, path.length) + "' is given twice")
     parent.values.set(name, value)
 }
 
 // `[a.b]`: the table the keys after it belong to
 fn open_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
     if path.length == 0 : r.fail("A table needs a name")
+    let parent = header_parent(r, root, path) !>
     let name = path.get(path.length - 1) !? ""
-    let parent = root
-    if path.length > 1 : parent = table_at(r, root, path.range(0, path.length - 1)) !>
-
-    if parent.values.has(name) {
-        let existing = parent.values.get(name) !? json.new_object()
-        match existing {
-            // A table that is already there was made as the parent of another one, which TOML
-            // allows: `[a.b]` before `[a]`. A header written twice is caught by the decoder,
-            // which remembers the headers it has seen.
-            json.ObjectValue as object => return object
-            default => r.fail_duplicate("'" + path.join(".") + "' is a value, so it cannot also be a table")
+    let existing = parent.values.get(name) ! return make_table(r, parent, name, Kind.header)
+    match existing {
+        json.ObjectValue as object => {
+            // Made as the parent of another one, which TOML allows: `[a.b]` before `[a]`
+            if kind_of(r, existing) == Kind.implicit {
+                r.kinds.set(node_id(existing), Kind.header)
+                return object
+            }
         }
+        default => {}
     }
-    let made = json.new_object()
-    parent.values.set(name, made)
-    return made
+    r.fail_duplicate("The table '" + join_path(path, path.length) + "' is given twice")
 }
 
 // `[[a.b]]`: another table in the array at that path, which the keys after it belong to
 fn open_array_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
     if path.length == 0 : r.fail("A table needs a name")
+    let parent = header_parent(r, root, path) !>
     let name = path.get(path.length - 1) !? ""
-    let parent = root
-    if path.length > 1 : parent = table_at(r, root, path.range(0, path.length - 1)) !>
-
     let made = json.new_object()
-    if !parent.values.has(name) {
+    r.kinds.set(node_id(made), Kind.header)
+    let existing = parent.values.get(name) ! {
         let array = json.new_array()
         array.values.append(made)
         parent.values.set(name, array)
+        r.kinds.set(node_id(array), Kind.table_array)
         return made
     }
-    let existing = parent.values.get(name) !? json.new_object()
-    match existing {
-        json.ArrayValue as array => {
-            array.values.append(made)
-            return made
-        }
-        default => r.fail_duplicate("'" + path.join(".") + "' is not an array of tables")
+    if kind_of(r, existing) == Kind.table_array {
+        existing.array.values.append(made)
+        return made
     }
+    r.fail_duplicate("'" + join_path(path, path.length) + "' is not an array of tables")
+}
+
+// The first `count` names of `path`, as they would be written
+fn join_path(path: Array[String], count: uint) String {
+    let out = ByteBuffer.new(32)
+    each path as name, index {
+        if index >= count : break
+        if index > 0 : out.write_byte('.')
+        out.write(encode_key(name))
+    }
+    return out.to_string()
 }

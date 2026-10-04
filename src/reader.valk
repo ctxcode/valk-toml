@@ -4,6 +4,10 @@ class Reader {
     at: uint (0)
     line: uint (1)
     column: uint (1)
+    // What made each table, by its address
+    kinds: HashMap[uint, Kind] (.{})
+    // How many arrays and inline tables the reader is inside
+    depth: uint (0)
 
     fn done() bool {
         return this.at >= this.text.length
@@ -51,26 +55,38 @@ class Reader {
         }
     }
     // Everything that may sit between two values: spaces, comments and line ends
-    fn skip_space_and_lines() {
+    fn skip_space_and_lines() !Error {
         while !this.done() {
             let ch = this.peek()
-            if ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' {
+            if ch == ' ' || ch == '\t' || ch == '\n' {
+                this.next()
+                continue
+            }
+            if ch == '\r' {
+                if this.peek_at(1) != '\n' : this.fail("A carriage return must be followed by a line feed")
                 this.next()
                 continue
             }
             if ch == '#' {
-                while !this.done() && this.peek() != '\n' : this.next()
+                this.skip_comment() !>
                 continue
             }
             break
         }
     }
+    // A comment up to the end of its line, which may not hold control characters
+    fn skip_comment() !Error {
+        while !this.done() {
+            let ch = this.peek()
+            if ch == '\n' || (ch == '\r' && this.peek_at(1) == '\n') : break
+            if is_control(ch) : this.fail("A comment may not hold control characters")
+            this.next()
+        }
+    }
     // The rest of a line after a value: spaces, a comment, then the line must end
     fn end_of_line() !Error {
         this.skip_spaces()
-        if this.peek() == '#' {
-            while !this.done() && this.peek() != '\n' : this.next()
-        }
+        if this.peek() == '#' : this.skip_comment() !>
         if this.done() : return
         let ch = this.peek()
         if ch == '\n' {
@@ -90,4 +106,9 @@ class Reader {
     fn fail_duplicate(message: String) !Error $throw {
         throw .duplicate { message: message, line: this.line, column: this.column }
     }
+}
+
+// Control characters other than tab, which TOML does not allow in strings or comments
+fn is_control(ch: u8) bool {
+    return (ch < 0x20 && ch != '\t') || ch == 0x7f
 }

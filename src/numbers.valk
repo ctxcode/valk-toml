@@ -21,28 +21,68 @@ fn read_number_or_date(r: Reader) json.Value !Error {
 
     r.skip(word.length)
 
-    if looks_like_date(word) : return json.new_string(word)
+    if looks_like_date(word) {
+        if !is_date(word) : r.fail("'" + word + "' is not a valid date or time")
+        return json.new_string(word)
+    }
     if word == "inf" || word == "+inf" : return json.new_float(parse_float("inf") !? 0)
     if word == "-inf" : return json.new_float(parse_float("-inf") !? 0)
     if word == "nan" || word == "+nan" || word == "-nan" : return json.new_float(parse_float("nan") !? 0)
 
-    let cleaned = word.replace("_", "")
-    if cleaned.starts_with("0x") || cleaned.starts_with("0X") {
-        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 16) !>)
-    }
-    if cleaned.starts_with("0o") || cleaned.starts_with("0O") {
-        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 8) !>)
-    }
-    if cleaned.starts_with("0b") || cleaned.starts_with("0B") {
-        return json.new_int(parse_base(r, cleaned.range(2, cleaned.length - 2), 2) !>)
+    if word.length > 2 && word[0] == '0' {
+        let prefix = word[1]
+        let base: uint = prefix == 'x' ? 16 : (prefix == 'o' ? 8 : (prefix == 'b' ? 2 : 0))
+        if base > 0 : return json.new_int(parse_base(r, word, base) !>)
     }
 
-    if cleaned.contains(".") || cleaned.contains("e") || cleaned.contains("E") {
+    // Decimal: a sign, digits without a leading zero, then a fraction and an exponent
+    let i: uint = 0
+    if word[0] == '+' || word[0] == '-' : i++
+    let first = i
+    i = digit_run(word, i, 10)
+    if i == first : r.fail("'" + word + "' is not a number")
+    if word[first] == '0' && i > first + 1 : r.fail("'" + word + "' has a leading zero")
+    let is_float = false
+    if i < word.length && word[i] == '.' {
+        let from = ++i
+        i = digit_run(word, i, 10)
+        if i == from : r.fail("'" + word + "' needs digits after the '.'")
+        is_float = true
+    }
+    if i < word.length && (word[i] == 'e' || word[i] == 'E') {
+        i++
+        if i < word.length && (word[i] == '+' || word[i] == '-') : i++
+        let from = i
+        i = digit_run(word, i, 10)
+        if i == from : r.fail("'" + word + "' needs digits in its exponent")
+        is_float = true
+    }
+    if i != word.length : r.fail("'" + word + "' is not a number")
+
+    let cleaned = word.replace("_", "")
+    if is_float {
         let number = parse_float(cleaned) ! r.fail("'" + word + "' is not a number")
         return json.new_float(number)
     }
-    let whole = cleaned.to_int() ! r.fail("'" + word + "' is not a number")
+    let whole = cleaned.to_int() ! r.fail("'" + word + "' does not fit in 64 bits")
     return json.new_int(whole)
+}
+
+// Where the digits from `at` end; a `_` must sit between two digits. Returns `at` when there are
+// none, and the position of a misplaced `_` so the caller finds text it did not expect.
+fn digit_run(word: String, at: uint, base: uint) uint {
+    let i = at
+    while i < word.length {
+        let ch = word[i]
+        if ch == '_' {
+            if i == at || i + 1 >= word.length || digit_value(word[i + 1]) >= base : return i
+            i++
+            continue
+        }
+        if digit_value(ch) >= base : break
+        i++
+    }
+    return i
 }
 
 // A date and time may carry a space in the middle: `1979-05-27 07:32:00`
@@ -61,19 +101,21 @@ fn trim_value(raw: String) String {
 
 // `1979-05-27`, `07:32:00`, `1979-05-27T07:32:00Z`, and the same with a space or an offset
 fn looks_like_date(word: String) bool {
-    if word.length < 8 : return false
-    let digits_and_dashes = word.length >= 10 && word[4] == '-' && word[7] == '-'
-    let time_only = word.length >= 8 && word[2] == ':' && word[5] == ':'
-    return digits_and_dashes || time_only
+    if word.length >= 10 && word[4] == '-' && word[7] == '-' : return true
+    return word.length >= 5 && word[2] == ':'
 }
 
-fn parse_base(r: Reader, digits: String, base: uint) int !Error {
-    if digits.length == 0 : r.fail("A number in base " + base + " needs digits")
+// `0x..`, `0o..` or `0b..`, with no sign and a lowercase prefix
+fn parse_base(r: Reader, word: String, base: uint) int !Error {
+    if digit_run(word, 2, base) != word.length : r.fail("'" + word + "' is not a number in base " + base)
     let value: int = 0
-    each digits as ch {
-        let digit = digit_value(ch)
-        if digit >= base : r.fail("'" + ch.to_ascii_string() + "' is not a digit in base " + base)
-        value = value * base.to(int) + digit.to(int)
+    let i: uint = 2
+    while i < word.length {
+        let ch = word[i++]
+        if ch == '_' : continue
+        let digit = digit_value(ch).to(int)
+        if value > (int.$max - digit) / base.to(int) : r.fail("'" + word + "' does not fit in 64 bits")
+        value = value * base.to(int) + digit
     }
     return value
 }
@@ -87,4 +129,52 @@ fn digit_value(ch: u8) uint {
 
 fn parse_float(text: String) float !SyntaxError {
     return text.to_float() !>
+}
+
+// A date, a time of day, or both, with the ranges each part has
+fn is_date(word: String) bool {
+    let i: uint = 0
+    if word.length >= 10 && word[4] == '-' {
+        let year = read_digits(word, 0, 4) ?! return false
+        let month = read_digits(word, 5, 2) ?! return false
+        let day = read_digits(word, 8, 2) ?! return false
+        if word[7] != '-' || month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) : return false
+        if word.length == 10 : return true
+        let separator = word[10]
+        if separator != 'T' && separator != 't' && separator != ' ' : return false
+        i = 11
+    }
+    // A time of day; TOML 1.1 lets the seconds be left out
+    let hour = read_digits(word, i, 2) ?! return false
+    let minute = read_digits(word, i + 3, 2) ?! return false
+    if word[i + 2] != ':' || hour > 23 || minute > 59 : return false
+    i += 5
+    if i < word.length && word[i] == ':' {
+        let second = read_digits(word, i + 1, 2) ?! return false
+        if second > 60 : return false
+        i += 3
+        if i < word.length && word[i] == '.' {
+            let from = ++i
+            while i < word.length && word[i] >= '0' && word[i] <= '9' : i++
+            if i == from : return false
+        }
+    }
+    if i == word.length : return true
+    // Only a date and time has an offset
+    if word.length < 11 || word[4] != '-' : return false
+    if (word[i] == 'Z' || word[i] == 'z') : return i + 1 == word.length
+    if word[i] != '+' && word[i] != '-' : return false
+    if i + 6 != word.length || word[i + 3] != ':' : return false
+    let hours = read_digits(word, i + 1, 2) ?! return false
+    let minutes = read_digits(word, i + 4, 2) ?! return false
+    return hours <= 23 && minutes <= 59
+}
+
+fn days_in_month(year: uint, month: uint) uint {
+    if month == 2 {
+        let leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0
+        return leap ? 29 : 28
+    }
+    if month == 4 || month == 6 || month == 9 || month == 11 : return 30
+    return 31
 }
