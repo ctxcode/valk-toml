@@ -1,6 +1,6 @@
 use valk.json
 
-// Where a value goes. A table is a `json.ObjectValue`, and its members are written into its own
+// Where a value goes. A table is a `Map[json.Value]`, and its members are written into its own
 // map, so `[[servers]]` can hand back the table that the keys after it belong to.
 
 // What made a table, which decides what may still be written into it. A table the reader has no
@@ -18,8 +18,8 @@ enum Kind {
 
 fn node_id(node: json.Value) uint {
     match node {
-        json.ObjectValue as object => return object.@cast(ptr).@cast(uint)
-        json.ArrayValue as array => return array.@cast(ptr).@cast(uint)
+        Map[json.Value] as object => return object.@cast(ptr).@cast(uint)
+        Array[json.Value] as array => return array.@cast(ptr).@cast(uint)
         default => return 0
     }
 }
@@ -28,9 +28,9 @@ fn kind_of(r: Reader, node: json.Value) ?Kind {
     return r.kinds.get(node_id(node)) !? null
 }
 
-fn make_table(r: Reader, parent: json.ObjectValue, name: String, kind: Kind) json.ObjectValue {
+fn make_table(r: Reader, parent: Map[json.Value], name: String, kind: Kind) Map[json.Value] {
     let made = json.new_object()
-    parent.values.set(name, made)
+    parent.set(name, made)
     r.kinds.set(node_id(made), kind)
     return made
 }
@@ -38,26 +38,26 @@ fn make_table(r: Reader, parent: json.ObjectValue, name: String, kind: Kind) jso
 // Walks the path of a `[header]`, making the tables that are not there yet, and returns the
 // last one. A step that lands on an array of tables follows its last table, which is what
 // `[[a]]` then `[a.b]` means.
-fn header_parent(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+fn header_parent(r: Reader, root: Map[json.Value], path: Array[String]) Map[json.Value] !Error {
     let current = root
     let i: uint = 0
     while i + 1 < path.length {
         let name = path.get(i++) !? ""
-        let child = current.values.get(name) ! {
+        let child = current.get(name) ! {
             current = make_table(r, current, name, Kind.implicit)
             continue
         }
         let kind = kind_of(r, child)
         match child {
-            json.ObjectValue as object => {
+            Map[json.Value] as object => {
                 if !isset(kind) : r.fail_duplicate("'" + name + "' is an inline table, which cannot be added to")
                 current = object
             }
-            json.ArrayValue as array => {
+            Array[json.Value] as array => {
                 if kind != Kind.table_array : r.fail_duplicate("'" + name + "' is an array value, which cannot be added to")
-                let last = array.values.get(array.values.length - 1) ! r.fail_duplicate("'" + name + "' is an empty array")
+                let last = array.get(array.length - 1) ! r.fail_duplicate("'" + name + "' is an empty array")
                 match last {
-                    json.ObjectValue as object => current = object
+                    Map[json.Value] as object => current = object
                     default => r.fail_duplicate("'" + name + "' holds values, not tables")
                 }
             }
@@ -69,19 +69,19 @@ fn header_parent(r: Reader, root: json.ObjectValue, path: Array[String]) json.Ob
 
 // `key = value` inside the table that is open; a dotted key may only pass through tables that
 // dotted keys made
-fn set_key(r: Reader, table: json.ObjectValue, path: Array[String], value: json.Value) !Error {
+fn set_key(r: Reader, table: Map[json.Value], path: Array[String], value: json.Value) !Error {
     if path.length == 0 : r.fail("A value needs a key")
     let parent = table
     let i: uint = 0
     while i + 1 < path.length {
         let name = path.get(i++) !? ""
-        let child = parent.values.get(name) ! {
+        let child = parent.get(name) ! {
             parent = make_table(r, parent, name, Kind.dotted)
             continue
         }
         let kind = kind_of(r, child)
         match child {
-            json.ObjectValue as object => {
+            Map[json.Value] as object => {
                 if kind != Kind.dotted : r.fail_duplicate("'" + join_path(path, i) + "' is already defined, so a dotted key cannot add to it")
                 parent = object
             }
@@ -89,18 +89,18 @@ fn set_key(r: Reader, table: json.ObjectValue, path: Array[String], value: json.
         }
     }
     let name = path.get(path.length - 1) !? ""
-    if parent.values.has(name) : r.fail_duplicate("'" + join_path(path, path.length) + "' is given twice")
-    parent.values.set(name, value)
+    if parent.has(name) : r.fail_duplicate("'" + join_path(path, path.length) + "' is given twice")
+    parent.set(name, value)
 }
 
 // `[a.b]`: the table the keys after it belong to
-fn open_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+fn open_table(r: Reader, root: Map[json.Value], path: Array[String]) Map[json.Value] !Error {
     if path.length == 0 : r.fail("A table needs a name")
     let parent = header_parent(r, root, path) !>
     let name = path.get(path.length - 1) !? ""
-    let existing = parent.values.get(name) ! return make_table(r, parent, name, Kind.header)
+    let existing = parent.get(name) ! return make_table(r, parent, name, Kind.header)
     match existing {
-        json.ObjectValue as object => {
+        Map[json.Value] as object => {
             // Made as the parent of another one, which TOML allows: `[a.b]` before `[a]`
             if kind_of(r, existing) == Kind.implicit {
                 r.kinds.set(node_id(existing), Kind.header)
@@ -113,21 +113,21 @@ fn open_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.Objec
 }
 
 // `[[a.b]]`: another table in the array at that path, which the keys after it belong to
-fn open_array_table(r: Reader, root: json.ObjectValue, path: Array[String]) json.ObjectValue !Error {
+fn open_array_table(r: Reader, root: Map[json.Value], path: Array[String]) Map[json.Value] !Error {
     if path.length == 0 : r.fail("A table needs a name")
     let parent = header_parent(r, root, path) !>
     let name = path.get(path.length - 1) !? ""
     let made = json.new_object()
     r.kinds.set(node_id(made), Kind.header)
-    let existing = parent.values.get(name) ! {
+    let existing = parent.get(name) ! {
         let array = json.new_array()
-        array.values.append(made)
-        parent.values.set(name, array)
+        array.append(made)
+        parent.set(name, array)
         r.kinds.set(node_id(array), Kind.table_array)
         return made
     }
     if kind_of(r, existing) == Kind.table_array {
-        existing.array.values.append(made)
+        existing.array.append(made)
         return made
     }
     r.fail_duplicate("'" + join_path(path, path.length) + "' is not an array of tables")

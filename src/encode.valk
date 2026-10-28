@@ -11,7 +11,7 @@ use valk.json
 + fn encode(value: json.Value) String {
     let out = ByteBuffer.new(256)
     match value {
-        json.ObjectValue as object => write_table(out, object, Array[String]{})
+        Map[json.Value] as object => write_table(out, object, Array[String]{})
         default => out.write(encode_inline(value))
     }
     return out.to_string()
@@ -24,10 +24,10 @@ use valk.json
 }
 
 // The keys of a table, then the tables under it
-fn write_table(out: ByteBuffer, table: json.ObjectValue, path: Array[String]) {
+fn write_table(out: ByteBuffer, table: Map[json.Value], path: Array[String]) {
     // Plain values first: a table header would otherwise swallow them. TOML has no null, so a
     // null is left out, which reads back as a field's default.
-    each table.values as value, key {
+    each table as value, key {
         if value.is_null || is_table(value) || is_table_array(value) : continue
         out.write(encode_key(key))
         out.write(" = ")
@@ -35,24 +35,24 @@ fn write_table(out: ByteBuffer, table: json.ObjectValue, path: Array[String]) {
         out.write_byte('\n')
     }
 
-    each table.values as value, key {
+    each table as value, key {
         let inner = Array[String]{}
         inner.append_many(path)
         inner.append(key)
 
         match value {
-            json.ObjectValue as object => {
+            Map[json.Value] as object => {
                 out.write_byte('\n')
                 out.write_byte('[')
                 out.write(encode_path(inner))
                 out.write("]\n")
                 write_table(out, object, inner)
             }
-            json.ArrayValue as array => {
+            Array[json.Value] as array => {
                 if !is_table_array(value) : continue
-                each array.values as item {
+                each array as item {
                     match item {
-                        json.ObjectValue as object => {
+                        Map[json.Value] as object => {
                             out.write_byte('\n')
                             out.write("[[")
                             out.write(encode_path(inner))
@@ -78,21 +78,21 @@ fn encode_inline(value: json.Value) String {
         int as number => return number.to(String)
         float as number => return encode_float(number)
         bool as yes => return yes ? "true" : "false"
-        json.ArrayValue as array => {
+        Array[json.Value] as array => {
             let out = ByteBuffer.new(32)
             out.write_byte('[')
-            each array.values as item, index {
+            each array as item, index {
                 if index > 0 : out.write(", ")
                 out.write(encode_inline(item))
             }
             out.write_byte(']')
             return out.to_string()
         }
-        json.ObjectValue as object => {
+        Map[json.Value] as object => {
             let out = ByteBuffer.new(32)
             out.write("{ ")
             let first = true
-            each object.values as item, key {
+            each object as item, key {
                 if item.is_null : continue
                 if !first : out.write(", ")
                 first = false
@@ -162,7 +162,7 @@ fn hex_digit(value: u8) u8 {
 
 fn is_table(value: json.Value) bool {
     match value {
-        json.ObjectValue as _ => return true
+        Map[json.Value] as _ => return true
         default => return false
     }
 }
@@ -170,9 +170,9 @@ fn is_table(value: json.Value) bool {
 // An array whose items are all tables is written as `[[name]]`, anything else on one line
 fn is_table_array(value: json.Value) bool {
     match value {
-        json.ArrayValue as array => {
-            if array.values.length == 0 : return false
-            each array.values as item {
+        Array[json.Value] as array => {
+            if array.length == 0 : return false
+            each array as item {
                 if !is_table(item) : return false
             }
             return true

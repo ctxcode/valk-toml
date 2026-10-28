@@ -4,7 +4,7 @@
 TOML for [Valk](https://valk-lang.dev): reading and writing, straight into and out of your own
 classes. Purely written in Valk, with no os-package dependencies.
 
-Requires Valk 0.7.0 or newer.
+Requires Valk 0.8.1 or newer.
 
 ## Install
 
@@ -51,7 +51,7 @@ package uses, so everything that works with JSON works here:
 let document = toml.decode(text) ! panic("%{E.message}")
 println(document["server"]["port"].int)
 println(document["tags"][0].string)
-each document["servers"].array.values as server : println(server["name"].string)
+each document["servers"].array as server : println(server["name"].string)
 ```
 
 `toml.encode(document)` writes one back out.
