@@ -1,5 +1,4 @@
 use toml
-use valk.json
 use valk.time
 
 test "Values" {
@@ -188,7 +187,7 @@ test "Reading into a class" {
     assert(!fewer.debug)
 
     // A field that is needed and not there is an error, not a zero, and it is named
-    let missing = toml.decode_to[Settings]("name = \"x\"\n[server]\nport = 1\n") ! {
+    let _ = toml.decode_to[Settings]("name = \"x\"\n[server]\nport = 1\n") ! {
         assert(error_is(E.code, type))
         assert(E.message == "'server.host' is missing")
         return
