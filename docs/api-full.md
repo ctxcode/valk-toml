@@ -54,10 +54,13 @@ println(config["server"]["port"].int)
 
 Reads TOML into a class or struct of your own.
 
-Every field must be in the text, unless it is nullable or has a default. A value that does
-not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
-`line` and `column` are only set for syntax errors. A `time.DateTime` field takes a date, or a
-date and time, converted to UTC.
+Every field must be in the text, unless it is nullable or has a default. Field tags control
+decoding: `$tag(toml: "name")` (or `` `toml: "name"` ``) matches a renamed key,
+`$tag(toml: "-")` skips a field (using its default value), and `$tag(omitempty)` allows
+missing values when the field has a default. A value that does not fit throws `.type`, and
+its message names the key, such as `'server.port' is missing`; `line` and `column` are only
+set for syntax errors. A `time.DateTime` field takes a date, or a date and time, converted
+to UTC.
 
 ```valk
 class Settings {
@@ -83,3 +86,6 @@ fs.write("config.toml", toml.encode(settings)) ! panic("%{E.message}")
 
 Writes a class or struct of your own as TOML, the way `json.from` would read it; a
 `time.DateTime` field is written as a TOML date and time in UTC.
+
+Field tags control encoding: `$tag(toml: "name")` (or `` `toml: "name"` ``) renames a key,
+`$tag(toml: "-")` skips a field, and `$tag(omitempty)` omits zero, empty, or null values.

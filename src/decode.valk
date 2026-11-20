@@ -44,10 +44,13 @@ use valk.json
 
 /// Reads TOML into a class or struct of your own.
 ///
-/// Every field must be in the text, unless it is nullable or has a default. A value that does
-/// not fit throws `.type`, and its message names the key, such as `'server.port' is missing`;
-/// `line` and `column` are only set for syntax errors. A `time.DateTime` field takes a date, or a
-/// date and time, converted to UTC.
+/// Every field must be in the text, unless it is nullable or has a default. Field tags control
+/// decoding: `$tag(toml: "name")` (or `` `toml: "name"` ``) matches a renamed key,
+/// `$tag(toml: "-")` skips a field (using its default value), and `$tag(omitempty)` allows
+/// missing values when the field has a default. A value that does not fit throws `.type`, and
+/// its message names the key, such as `'server.port' is missing`; `line` and `column` are only
+/// set for syntax errors. A `time.DateTime` field takes a date, or a date and time, converted
+/// to UTC.
 ///
 /// ```valk
 /// class Settings {

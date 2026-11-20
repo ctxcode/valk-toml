@@ -4,7 +4,7 @@
 TOML for [Valk](https://valk-lang.dev): reading and writing, straight into and out of your own
 classes. Purely written in Valk, with no os-package dependencies.
 
-Requires Valk 0.8.1 or newer.
+Requires Valk 0.8.10 or newer.
 
 ## Install
 
@@ -42,6 +42,23 @@ Every field of the class must be in the file, unless it is nullable or has a def
 error names the key: `'server.host' is missing`, `'server.port' should be an integer that fits the
 field`. A syntax error also sets `E.line` and `E.column`.
 
+### Field tags
+
+Field metadata tags customize how fields are encoded and decoded:
+
+```rust
+class Server {
+    host: String ("127.0.0.1") `toml: "bind-host"`
+    port: uint (8080)
+    tls_cert: ?String (null) `toml: "tls-cert", omitempty`
+    cached_addr: String ("") `toml: "-"`
+}
+```
+
+- `` `toml: "name"` `` or `$tag(toml: "name")`: maps the field to a different TOML key.
+- `` `toml: "-"` `` or `$tag(toml: "-")`: skips the field on encode and fills its default value on decode.
+- `$tag(omitempty)` (or `` `toml: "name", omitempty` ``): omits zero, empty, or null values on encode, and allows missing keys on decode when the field has a default value.
+
 ## When the shape is not fixed
 
 `decode` returns a `json.Value`, which is the same document type the standard library's `json`
@@ -69,8 +86,6 @@ In your own classes, a `time.DateTime` field (or `?time.DateTime`, or `Array[tim
 takes a TOML date or date and time. One with an offset is converted to UTC, one without is taken
 as UTC, and a date alone is its midnight; a time of day on its own does not fit a `DateTime`.
 `encode_of` writes such a field as a date and time in UTC, and leaves out fields that are null.
-Dates inside an array of tables need Valk 0.7.8 or newer, and keep their offset rather than being
-converted to UTC.
 
 `decode` passes dates through as the text they were written as: `1979-05-27T07:32:00Z` stays
 exactly that.
