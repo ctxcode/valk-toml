@@ -4,7 +4,7 @@
 TOML for [Valk](https://valk-lang.dev): reading and writing, straight into and out of your own
 classes. Purely written in Valk, with no os-package dependencies.
 
-Requires Valk 0.8.10 or newer.
+Requires Valk 0.9.1 or newer.
 
 ## Install
 
@@ -92,8 +92,10 @@ exactly that.
 
 ## Errors
 
-`syntax`, `duplicate` (a key or table given twice) and `type` (the document does not fit the
-class), each with the `line` and `column` where the reader stopped:
+`toml.Error` is a tagged union with variants `.syntax(message, line, column)`,
+`.duplicate(message, line, column)` (a key or table given twice), and `.type(message)` (the
+document does not fit the class), with `E.message`, `E.line`, `E.column`, and `E.to_string()`
+getters:
 
 ```rust
 toml.decode(text) ! {

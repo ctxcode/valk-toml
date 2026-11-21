@@ -188,7 +188,7 @@ test "Reading into a class" {
 
     // A field that is needed and not there is an error, not a zero, and it is named
     let _ = toml.decode_to[Settings]("name = \"x\"\n[server]\nport = 1\n") ! {
-        assert(error_is(E.code, type))
+        assert(E is .type)
         assert(E.message == "'server.host' is missing")
         return
     }
@@ -197,7 +197,7 @@ test "Reading into a class" {
 
 test "A value of the wrong type names its key" {
     toml.decode_to[Settings]("name = \"x\"\n[server]\nhost = \"h\"\nport = \"80\"\n") ! {
-        assert(error_is(E.code, type))
+        assert(E is .type)
         assert(E.message == "'server.port' should be an integer that fits the field")
         return
     }
@@ -207,26 +207,26 @@ test "A value of the wrong type names its key" {
 test "What is not TOML" {
     // A key with no value
     toml.decode("name\n") ! {
-        assert(error_is(E.code, syntax))
+        assert(E is .syntax)
         assert(E.line == 2)
     }
     // A string that never closes
     toml.decode("name = \"open\n") ! {
-        assert(error_is(E.code, syntax))
+        assert(E is .syntax)
     }
     // The same key twice
     toml.decode("a = 1\na = 2\n") ! {
-        assert(error_is(E.code, duplicate))
+        assert(E is .duplicate)
         assert(E.message.contains("'a'"))
     }
     // The same table twice
     toml.decode("[a]\nx = 1\n\n[a]\ny = 2\n") ! {
-        assert(error_is(E.code, duplicate))
+        assert(E is .duplicate)
         assert(E.message.contains("given twice"))
     }
     // Something after the value
     toml.decode("a = 1 oops\n") ! {
-        assert(error_is(E.code, syntax))
+        assert(E is .syntax)
         assert(E.line == 1)
         return
     }
@@ -262,7 +262,7 @@ test "Dates into DateTime fields" {
     let texts = Array[String]{ "published = 07:32:00", "published = \"soon\"", "published = 12" }
     each texts as text {
         toml.decode_to[Release]("name = \"x\"\n" + text) ! {
-            assert(error_is(E.code, type))
+            assert(E is .type)
             assert(E.message == "'published' should be a date, or a date and time")
             continue
         }
@@ -270,8 +270,23 @@ test "Dates into DateTime fields" {
     }
     // A date that does not exist is not TOML
     toml.decode_to[Release]("name = \"x\"\npublished = 1979-13-01") ! {
-        assert(error_is(E.code, syntax))
+        assert(E is .syntax)
         return
     }
     assert(false)
+}
+
+test "Error fields and string conversion" {
+    let syntax_err: toml.Error = .syntax("bad toml", 3, 7)
+    assert(syntax_err is .syntax)
+    assert(syntax_err.message == "bad toml")
+    assert(syntax_err.line == 3 && syntax_err.column == 7)
+    assert(syntax_err.to_string() == "bad toml")
+    assert("%{syntax_err}" == "bad toml")
+
+    let type_err: toml.Error = .type("'port' is missing")
+    assert(type_err is .type)
+    assert(type_err.message == "'port' is missing")
+    assert(type_err.line == 0 && type_err.column == 0)
+    assert("%{type_err}" == "'port' is missing")
 }

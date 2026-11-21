@@ -101,10 +101,10 @@ class Reader {
     }
 
     fn fail(message: String) !Error $throw {
-        throw .syntax { message: message, line: this.line, column: this.column }
+        throw .syntax(message, this.line, this.column)
     }
     fn fail_duplicate(message: String) !Error $throw {
-        throw .duplicate { message: message, line: this.line, column: this.column }
+        throw .duplicate(message, this.line, this.column)
     }
 }
 

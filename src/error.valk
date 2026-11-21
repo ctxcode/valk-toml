@@ -1,13 +1,41 @@
 /// Thrown when text is not TOML.
 ///
-/// - `syntax`: the text does not read as TOML.
-/// - `duplicate`: a key or a table is given twice, which TOML does not allow.
-/// - `type`: a value is not what the type it is read into needs.
+/// - `syntax(message, line, column)`: the text does not read as TOML.
+/// - `duplicate(message, line, column)`: a key or a table is given twice, which TOML does not allow.
+/// - `type(message)`: a value is not what the type it is read into needs.
 ///
-/// `line` and `column` say where the reader stopped, counting from one, so the message can be
-/// shown against the file.
-+ error Error (syntax, duplicate, type) payload {
-    message: String
-    line: uint (0)
-    column: uint (0)
+/// `line` and `column` say where the reader stopped, counting from one (or `0` when not
+/// applicable), so the message can be shown against the file.
++ union Error {
+    syntax(String, uint, uint)
+    duplicate(String, uint, uint)
+    type(String)
+
+    + get message: String {
+        return match this : String {
+            .syntax(msg, _, _) => msg
+            .duplicate(msg, _, _) => msg
+            .type(msg) => msg
+        }
+    }
+
+    + get line: uint {
+        return match this : uint {
+            .syntax(_, ln, _) => ln
+            .duplicate(_, ln, _) => ln
+            default => 0
+        }
+    }
+
+    + get column: uint {
+        return match this : uint {
+            .syntax(_, _, col) => col
+            .duplicate(_, _, col) => col
+            default => 0
+        }
+    }
+
+    + fn to_string() String $auto {
+        return this.message
+    }
 }

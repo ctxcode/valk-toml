@@ -7,24 +7,6 @@ Namespaces: [main](#main)
 
 # main
 
-## Errors for 'main'
-
-```js
-// Thrown when text is not TOML.
-+ error Error (syntax, duplicate, type) payload { message: String, line: uint (0), column: uint (0) }
-```
-
-### Error
-
-Thrown when text is not TOML.
-
-- `syntax`: the text does not read as TOML.
-- `duplicate`: a key or a table is given twice, which TOML does not allow.
-- `type`: a value is not what the type it is read into needs.
-
-`line` and `column` say where the reader stopped, counting from one, so the message can be
-shown against the file.
-
 ## Functions for 'main'
 
 ```js
@@ -89,3 +71,30 @@ Writes a class or struct of your own as TOML, the way `json.from` would read it;
 
 Field tags control encoding: `$tag(toml: "name")` (or `` `toml: "name"` ``) renames a key,
 `$tag(toml: "-")` skips a field, and `$tag(omitempty)` omits zero, empty, or null values.
+
+## Classes for 'main'
+
+```js
+// Thrown when text is not TOML.
++ union Error {
+    syntax(String, uint, uint)
+    duplicate(String, uint, uint)
+    type(String)
+
+    + get column: uint
+    + get line: uint
+    + get message: String
+    + fn to_string() String
+}
+```
+
+### Error
+
+Thrown when text is not TOML.
+
+- `syntax(message, line, column)`: the text does not read as TOML.
+- `duplicate(message, line, column)`: a key or a table is given twice, which TOML does not allow.
+- `type(message)`: a value is not what the type it is read into needs.
+
+`line` and `column` say where the reader stopped, counting from one (or `0` when not
+applicable), so the message can be shown against the file.

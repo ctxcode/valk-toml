@@ -237,7 +237,7 @@ test "Field tags: error paths use renamed keys" {
         [origin]
         px = 1
     ") ! {
-        assert(error_is(E.code, type))
+        assert(E is .type)
         assert(E.message == "'http-server.bind-host' is missing")
         return
     }
@@ -255,7 +255,7 @@ test "Field tags: wrong type in nested renamed key reports path" {
         [origin]
         px = 1
     ") ! {
-        assert(error_is(E.code, type))
+        assert(E is .type)
         assert(E.message == "'http-server.listen-port' should be an integer that fits the field")
         return
     }

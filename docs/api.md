@@ -7,13 +7,6 @@ Namespaces: [main](#main)
 
 # main
 
-## Errors for 'main'
-
-```js
-// Thrown when text is not TOML.
-+ error Error (syntax, duplicate, type) payload { message: String, line: uint (0), column: uint (0) }
-```
-
 ## Functions for 'main'
 
 ```js
@@ -25,4 +18,20 @@ Namespaces: [main](#main)
 + fn encode(value: Value) String
 // Writes a class or struct of your own as TOML, the way `json.from` would read it; a `time.DateTime` field is written as a TOML date and time in UTC.
 + fn encode_of(value: $T) String
+```
+
+## Classes for 'main'
+
+```js
+// Thrown when text is not TOML.
++ union Error {
+    syntax(String, uint, uint)
+    duplicate(String, uint, uint)
+    type(String)
+
+    + get column: uint
+    + get line: uint
+    + get message: String
+    + fn to_string() String
+}
 ```
